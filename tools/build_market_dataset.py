@@ -101,7 +101,7 @@ def build_price_series(ts_min_s, ts_max_s):
     """Sorted [(ts_seconds, close_usd)] covering [ts_min_s, ts_max_s] at the finest feasible
     resolution: 1-minute paged back to ts_min (or the page budget), hourly underneath for any
     older span the minute feed didn't reach. Returns (series, coverage_note)."""
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # repo root
     import kintara_tracker as kt
     pts = {}  # ts_seconds -> close  (1m overwrites hourly at the same ts)
 

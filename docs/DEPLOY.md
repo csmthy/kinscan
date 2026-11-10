@@ -108,7 +108,7 @@ The on-chain market data powering the **Market Watch** home page is **not** code
 (DBs are gitignored, and the data volume is never touched by `deploy.sh`). Build it on your Mac from
 the big treasury download, then copy it straight to the volume — no redeploy needed:
 ```bash
-python3 build_market_dataset.py                                   # market_index.db -> market.db
+python3 tools/build_market_dataset.py                                   # market_index.db -> market.db
 scp market.db root@<your-server-ip>:/opt/kintara-data/market.db    # land it on the data volume
 ssh root@<your-server-ip> 'chown kintara:kintara /opt/kintara-data/market.db'
 ```

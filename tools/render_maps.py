@@ -24,7 +24,7 @@ import os
 
 from PIL import Image, ImageDraw
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # repo root
 OUT = os.path.join(HERE, "MapImages")
 SS = 2  # supersample factor; rendered big then LANCZOS-downscaled for clean edges
 

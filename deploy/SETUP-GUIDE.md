@@ -38,7 +38,7 @@ Lines you run **on your Mac** vs **on the Droplet (after SSH)** are labeled.
 
 5. Go to the project and publish it to a new GitHub repo:
    ```bash
-   cd /Users/connorsmith/Desktop/kintara
+   cd path/to/kinscan
    git init
    git branch -M main
    git add .
@@ -114,7 +114,7 @@ first load can take ~30 seconds while the certificate is issued. Done! 🎉
 
 **On your Mac**, from the project folder:
 ```bash
-cd /Users/connorsmith/Desktop/kintara
+cd path/to/kinscan
 bash deploy/publish.sh "what you changed"
 ```
 

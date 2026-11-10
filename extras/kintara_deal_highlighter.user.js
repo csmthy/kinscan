@@ -5,6 +5,8 @@
 // @description  Highlights $KINS marketplace listings (KINS only) that meet your per-item units/$ and minimum-order rules. Read-only, no network calls, no automation.
 // @match        https://kintara.gg/play*
 // @match        https://www.kintara.gg/play*
+// @match        https://kintara.com/play*
+// @match        https://www.kintara.com/play*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
