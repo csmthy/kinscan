@@ -7,7 +7,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # app code + committed assets (the embedded frontend, world map, realm PNGs)
-COPY kintara_tracker.py world_map.jpg ./
+COPY kintara_tracker.py build_treasury_index.py world_map.jpg ./
+COPY fonts/ ./fonts/
 COPY MapImages/ ./MapImages/
 
 # Single long-running process: it serves the dashboard AND runs the background

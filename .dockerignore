@@ -11,6 +11,7 @@ venv/
 .git/
 .gitignore
 .DS_Store
-render_maps.py
-DEPLOY.md
+tools/
+extras/
+docs/
 README.md

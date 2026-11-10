@@ -152,8 +152,14 @@ def kintara_rate_limited():
     _pace_backoff_until[0] = max(_pace_backoff_until[0], time.monotonic() + KINTARA_BACKOFF)
 
 
-BASE = "https://kintara.gg/api/marketplace/listings"
-STATS_BASE = "https://kintara.gg/api/marketplace/stats"
+# The game moved from kintara.gg to kintara.com (Nov 2026) and split into regional
+# clusters (us./eu./as.kintara.com, each with its own fanout + spectate host). Public
+# endpoints still live on the main origin; regional hosts come from /api/servers.
+SCRIPT_DIR_FONTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+KINTARA_ORIGIN = (os.environ.get("KINTARA_ORIGIN") or "https://kintara.com").rstrip("/")
+KINTARA_DOMAIN = KINTARA_ORIGIN.split("://", 1)[-1]
+BASE = f"{KINTARA_ORIGIN}/api/marketplace/listings"
+STATS_BASE = f"{KINTARA_ORIGIN}/api/marketplace/stats"
 BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
               "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36")
 # KINS/SOL pool on Solana (same token kintaragold.xyz tracks). GeckoTerminal
@@ -165,10 +171,11 @@ GECKO_POOL_INFO = (f"https://api.geckoterminal.com/api/v2/networks/solana/"
                    f"pools/{GECKO_POOL}")
 # --- On-chain (Solana) config for the Player page's wallet stats ---
 # Public Solana JSON-RPC. The default public endpoint rate-limits hard; point SOLANA_RPC at
-# a Helius/QuickNode URL in prod (see check_pump_rewards.py for the same pattern).
+# a Helius/QuickNode URL in prod.
 SOLANA_RPC = os.environ.get("SOLANA_RPC") or os.environ.get("RPC") or "https://api.mainnet-beta.solana.com"
 WSOL_MINT = "So11111111111111111111111111111111111111112"
 KINS_MINT_OVERRIDE = os.environ.get("KINS_MINT") or None   # else auto-resolved from the pool
+KINS_MINT_KNOWN = "Tqj8yFmagrg7oorpQkVGYR52r96RFTamvWfth9bpump"   # also reported by /api/token/blimp-stats
 # The marketplace treasury/fee wallet(s) — it skims ~5% off every marketplace trade, so a tx
 # where it's a KINS participant is a marketplace buy/sell. Identified on-chain from a known
 # wallet's history (it took 5% in 137/140 trades). Comma-separated env override.
@@ -184,17 +191,22 @@ CF_ANALYTICS_TOKEN = (os.environ.get("CLOUDFLARE_WEB_ANALYTICS_TOKEN") or "").st
 _analytics_admin_password = (os.environ.get("KINSCAN_ADMIN_PASSWORD") or "").strip()
 KINTARAGOLD_URL = "https://kintaragold.xyz/"
 # kintara.gg's live server list (population label + queue length per server).
-SERVERS_URL = "https://kintara.gg/api/servers"
+SERVERS_URL = f"{KINTARA_ORIGIN}/api/servers"
 # kintara.gg's own traveling-merchant campaign state (public, no auth — the game
 # client reads it the same way via its read-fanout origin). Returns
 # {ok, mode, wood, stone, coal, cooked_fish_meat, metal, goals:{...}, complete,
 #  goldTradeEnabled, goldStock, goldStockFull}.
-MERCHANT_URL = "https://kintara.gg/api/world/merchant-campaign"
+MERCHANT_URL = f"{KINTARA_ORIGIN}/api/world/merchant-campaign"
 # Total world supply per item (units of each item across ALL player inventories, banks, and
 # bags) — powers kintara.gg's own /#index. The authoritative origin (kintara.gg) requires a
 # logged-in wallet session ("unauthorized"); the public read-fanout mirror serves it without
 # auth. Returns {ok, playerCount, generatedAt, rows:[{id (=item_type), label, icon, count, category}]}.
-WORLD_INDEX_URL = "https://fanout.kintara.gg/api/world-item-index"
+WORLD_INDEX_PATH = "/api/world-item-index"
+# Public read-fanout mirrors (one per region). Taken live from /api/servers' fanoutOrigin;
+# these are the fallbacks if the server list hasn't loaded yet.
+FANOUT_ORIGINS_DEFAULT = ("https://fanout.kintara.com", "https://fanout-us.kintara.com", "https://fanout-eu.kintara.com",
+                          "https://fanout-as.kintara.com")
+WORLD_INDEX_URL = FANOUT_ORIGINS_DEFAULT[0] + WORLD_INDEX_PATH
 WORLD_INDEX_CACHE_SEC = _envi("WORLD_INDEX_CACHE_SEC", 600)   # global data; re-fetch at most this often
 # Traveling-merchant donation campaign resources, from kintara.gg game.js
 # (`MERCHANT_CAMPAIGN_GOALS`) and the live `/api/world/merchant-campaign` payload.
@@ -226,8 +238,10 @@ MERCHANT_RECIPE = (
 # Spectate is per SERVER (the in-game "sN" = server number). The read-fanout host
 # (ktra-server-b) only mirrors servers 1-4, but kintara.gg itself serves the live
 # spectator stream for all 12 servers, so we point at the authoritative origin.
-SPECTATE_WS = "wss://kintara.gg/ws/spectate/s{shard}"
-SHARDS = tuple(range(1, 13))   # 12 separate game servers/worlds
+# Since the kintara.com move each server has its own regional wsBaseUrl + routeShardId
+# (see spectate_urls()); this is only the last-resort pattern.
+SPECTATE_WS = "wss://" + KINTARA_DOMAIN + "/ws/spectate/s{shard}"
+SHARDS = tuple(range(1, 16))   # server ids; replaced by the live /api/servers list once loaded
 # The spectator is only sent players in the realm it's subscribed to (via a
 # {t:"spec_reg",region} message), and within the big "world" realm only those near
 # the hub camera. To roster a whole world we round-robin every realm, accumulating
@@ -267,7 +281,7 @@ BOSS_CANDIDATES = [
 ]
 BOSS_LABEL = ("Venomweaver", "\U0001F577")   # 🕷 — display name + emoji for Live World
 BOSS_CENSUS_INTERVAL = _envf("BOSS_CENSUS_INTERVAL", 8)   # gap between per-shard census visits (s)
-PROPERTY_STATUS_URL = "https://kintara.gg/api/property-signs/status"
+PROPERTY_STATUS_URL = f"{KINTARA_ORIGIN}/api/property-signs/status"
 # Skin-tone palette (game.js `SKIN_TONE_HEX`) for rendering player avatars.
 SKIN_TONE_HEX = ("#f1e8df", "#e3c19e", "#d4a574", "#7e5f49", "#5c4332")
 # Property plots in world-grid (col0,col1,row0,row1) from game.js (MANSIONS,
@@ -1760,10 +1774,40 @@ def _refresh_kins_daily():
     return _KINS_DAILY_CACHE["map"]
 
 
+_KINS_ARCHIVE = {"map": None}
+
+
+def kins_archive_daily():
+    """{day: avg KINS/USD} from market.db's per-trade kins_usd — offline fallback for candles."""
+    if _KINS_ARCHIVE["map"] is None:
+        m = {}
+        con = market_connect()
+        if con is not None:
+            try:
+                for r in con.execute("""SELECT date, AVG(kins_usd) p FROM market_txns
+                                        WHERE kins_usd>0 GROUP BY date"""):
+                    if r[0] and r[1]:
+                        m[r[0]] = r[1]
+            except Exception:
+                pass
+            finally:
+                con.close()
+        _KINS_ARCHIVE["map"] = m
+    return _KINS_ARCHIVE["map"]
+
+
 def kins_daily_usd():
     """{ 'YYYY-MM-DD' (UTC): KINS close USD } for the last ~1000 days of daily
-    candles. Cached ~5 min. Lets us re-price an item's daily USD sale history in
-    $KINS (item_usd / kins_usd) to separate item alpha from token beta."""
+    candles, backfilled from the on-chain archive. Cached ~5 min."""
+    live = _kins_daily_live()
+    if live:
+        out = dict(kins_archive_daily())
+        out.update(live)
+        return out
+    return kins_archive_daily()
+
+
+def _kins_daily_live():
     now = time.time()
     if _KINS_DAILY_CACHE["map"]:
         if now - _KINS_DAILY_CACHE["ts"] >= 300:
@@ -1938,12 +1982,13 @@ _kins_px_cache = {"at": 0, "px": None}
 
 def _refresh_kins_px():
     import requests
-    r = requests.get("https://kintara.gg/api/token/blimp-stats",
+    r = requests.get(f"{KINTARA_ORIGIN}/api/token/blimp-stats",
                      headers={"User-Agent": BROWSER_UA}, timeout=PUBLIC_HTTP_TIMEOUT)
     r.raise_for_status()
     px = (r.json() or {}).get("priceUsd")
     if px:
-        _kins_px_cache.update(at=time.time(), px=px)
+        _kins_px_cache.update(at=time.time(), px=px, stale=False)
+        save_lastgood("kins_px", px)
     return _kins_px_cache["px"]
 
 
@@ -1958,6 +2003,17 @@ def current_kins_usd():
     try:
         return _refresh_kins_px()
     except Exception:
+        if _kins_px_cache["px"] is None:
+            px, at = load_lastgood("kins_px")
+            if px:
+                # serve the last known price, but leave `at` old so it keeps retrying
+                _kins_px_cache.update(px=px, at=(at or 0), stale=True)
+            else:
+                arch = kins_archive_daily()
+                if arch:
+                    d = max(arch)
+                    _kins_px_cache.update(px=arch[d], stale=True,
+                        at=datetime.fromisoformat(d).replace(tzinfo=timezone.utc).timestamp())
         return _kins_px_cache["px"]
 
 
@@ -1990,11 +2046,13 @@ def kins_mint():
                     return addr
     except Exception:
         pass
-    return None
+    # GeckoTerminal unreachable: the token itself hasn't changed, so fall back to the known mint.
+    _kins_mint_cache["mint"] = KINS_MINT_KNOWN
+    return KINS_MINT_KNOWN
 
 
 def _sol_rpc(method, params, retries=5):
-    """Solana JSON-RPC POST with exponential backoff (same pattern as check_pump_rewards.py)."""
+    """Solana JSON-RPC POST with exponential backoff."""
     import requests
     delay = 0.5
     for attempt in range(retries):
@@ -2830,21 +2888,58 @@ def refresh_gold_history(rng="1D"):
     con = connect(readonly=True)
     try:
         gold, spot = gold_series_for_chart(con)
+        last_seen = con.execute("SELECT MAX(last_seen) FROM listings").fetchone()[0]
     finally:
         con.close()
+    # Our gold price is measured from live listings. If the order book stopped updating
+    # (upstream outage / login gate), later rows just repeat a frozen price — drop them.
+    if last_seen and gold:
+        try:
+            cut = datetime.fromisoformat(last_seen.replace("Z", "+00:00")).timestamp() * 1000 + 3600 * 1000
+            trimmed = [g for g in gold if g[0] <= cut]
+            # a long tail of one identical value is a stuck fallback, not a market: keep its
+            # first sample only, so the chart ends where real measurements end
+            if len(trimmed) > 15:
+                i = len(trimmed) - 1
+                while i > 0 and trimmed[i - 1][1] == trimmed[-1][1]:
+                    i -= 1
+                if len(trimmed) - i >= 15 and trimmed[-1][0] - trimmed[i][0] >= 45 * 60 * 1000:
+                    trimmed = trimmed[:i + 1]
+            if len(trimmed) >= 2:
+                gold = trimmed
+                spot = gold[-1][1]
+        except Exception:
+            pass
     if not gold:
         raise RuntimeError("no gold price data yet")
-    candles = kins_series_for_range(window_sec, bucket_sec)
-    gstart = gold[0][0]
+    try:
+        candles = kins_series_for_range(window_sec, bucket_sec)
+    except Exception:
+        candles = []
+    gstart, gend = gold[0][0], gold[-1][0]
+    now_ms = time.time() * 1000
     series = []
     for ts, ku in candles:
         tms = ts * 1000
-        if tms < gstart:
+        if tms < gstart or tms > gend + 6 * 3600 * 1000:
             continue
         gu = interp_gold(gold, tms)
         series.append({"t": int(tms), "gold_usd": gu, "kins_usd": ku,
                        "kins_per_gold": (gu / ku) if (gu and ku) else None})
-    payload = {"ok": True, "range": rng, "spot": spot, "series": series}
+    stale = now_ms - gend > 6 * 3600 * 1000
+    if len(series) < 2:
+        # No live KINS candles, or our gold series stopped updating: chart the stored gold
+        # series itself over the same window, anchored at its last data point.
+        start = gend - window_sec * 1000
+        buckets = {}
+        for ts, gu in gold:
+            if ts >= start and gu:
+                buckets.setdefault(int(ts // (bucket_sec * 1000)), []).append(gu)
+        series = [{"t": int(k * bucket_sec * 1000), "gold_usd": sum(v) / len(v),
+                   "kins_usd": None, "kins_per_gold": None} for k, v in sorted(buckets.items())]
+        stale = True
+    payload = {"ok": True, "range": rng, "spot": spot, "series": series,
+               "stale": stale, "as_of": int(gend)}
     _goldhist_cache[rng] = (time.time(), payload)
     return payload
 
@@ -3053,43 +3148,170 @@ _merchant_cache = {"at": 0, "data": None}
 _property_cache = {"at": 0, "data": None}
 
 
-def fetch_servers(force=False):
-    """kintara.gg's live server list (name, populationLabel, full, queueLength,
-    minLevel). Cached ~30s; raises on a cold failure (caller serves last-good)."""
-    import requests
+def save_lastgood(name, data):
+    """Persist the last successful payload of a live feed, so a restart during an upstream
+    outage still has something to show (tagged with when it was captured)."""
+    try:
+        con = connect()
+        set_setting(con, "lastgood:" + name, json.dumps({"at": time.time(), "data": data}))
+        con.close()
+    except Exception:
+        pass
+
+
+def load_lastgood(name):
+    """(data, captured_at_epoch_s) of the last good payload for a live feed, or (None, None)."""
+    try:
+        con = connect(readonly=True)
+        raw = get_setting(con, "lastgood:" + name)
+        con.close()
+        if raw:
+            d = json.loads(raw)
+            return d.get("data"), d.get("at")
+    except Exception:
+        pass
+    return None, None
+
+
+def _live_fetch(cache, name, url, ttl, validate=None):
+    """Shared stale-while-refresh fetch for the small public JSON feeds (servers, merchant,
+    property). Live copy: refresh in the background once older than `ttl`. Saved copy (from
+    the DB, upstream down): serve it and retry in the background at most every 30s. Cold:
+    fetch now; on failure fall back to the persisted last-good copy, else raise (and don't
+    hammer upstream — a failed cold fetch is not retried on the request path for 30s)."""
     now = time.time()
-    if _servers_cache["data"] and not force:
-        if now - _servers_cache["at"] >= 30:
-            refresh_once("servers", lambda: fetch_servers(True))
-        return _servers_cache["data"]
-    r = requests.get(SERVERS_URL, headers={"User-Agent": BROWSER_UA},
-                     timeout=PUBLIC_HTTP_TIMEOUT)
-    r.raise_for_status()
-    servers = (r.json() or {}).get("servers") or []
-    _servers_cache.update(at=now, data=servers)
+    if cache["data"] is not None:
+        if cache.get("live"):
+            if now - cache["at"] >= ttl:
+                refresh_once(name, lambda: _live_refresh(name, url, validate))
+        elif now - cache.get("tried", 0) >= 30:
+            cache["tried"] = now
+            refresh_once(name, lambda: _live_refresh(name, url, validate))
+        return cache["data"]
+    if now - cache.get("tried", 0) < 30 and cache.get("err"):
+        raise RuntimeError(cache["err"])
+    cache["tried"] = now
+    if _live_refresh(name, url, validate):
+        return cache["data"]
+    data, at = load_lastgood(name)
+    if data is not None:
+        cache.update(data=data, at=at or 0, live=False)
+        if name == "servers":
+            _update_shards(data.get("servers"))
+        return data
+    raise RuntimeError(cache.get("err") or "unavailable")
+
+
+def _live_refresh(name, url, validate):
+    """Background refresh for _live_fetch: keeps serving the old copy if the fetch fails."""
+    import requests
+    try:
+        r = requests.get(url, headers={"User-Agent": BROWSER_UA}, timeout=PUBLIC_HTTP_TIMEOUT)
+        r.raise_for_status()
+        data = r.json() or {}
+        if validate and not validate(data):
+            raise ValueError("unexpected response shape")
+        GLOBAL_LIVE_CACHES[name].update(at=time.time(), data=data, live=True, err=None)
+        save_lastgood(name, data)
+        if name == "servers":
+            _update_shards(data.get("servers"))
+        return True
+    except Exception as e:
+        GLOBAL_LIVE_CACHES[name]["err"] = str(e)
+        return False
+
+
+GLOBAL_LIVE_CACHES = {"servers": _servers_cache, "merchant": _merchant_cache,
+                      "property": _property_cache}
+
+
+def feed_age(name):
+    """{"as_of": ms, "stale": bool} for a live feed's currently served copy."""
+    c = GLOBAL_LIVE_CACHES.get(name) or {}
+    at = c.get("at") or 0
+    return {"as_of": int(at * 1000) if at else None,
+            "stale": (not c.get("live")) or (time.time() - at > 15 * 60)}
+
+
+def _update_shards(servers):
+    global SHARDS
+    ids = []
+    for sv in servers or []:
+        try:
+            ids.append(int(sv.get("id")))
+        except (TypeError, ValueError):
+            pass
+    if ids:
+        SHARDS = tuple(sorted(set(ids)))
+
+
+def fetch_servers(force=False):
+    """The live server list. Since the kintara.com move each entry carries id, name, zone
+    (us/eu/asia) + zoneLabel, populationLabel, full, queueLength, bossCaveActive/Capacity,
+    requiresMembership, and its regional baseUrl / wsBaseUrl / fanoutOrigin / routeShardId.
+    Cached ~30s, last-good (persisted) on failure."""
+    d = _live_fetch(_servers_cache, "servers", SERVERS_URL, 30,
+                    validate=lambda x: isinstance(x.get("servers"), list))
+    servers = (d or {}).get("servers") or []
+    _update_shards(servers)
     return servers
 
 
+def server_info(sid):
+    """The raw /api/servers entry for a server id (or None)."""
+    for sv in (_servers_cache.get("data") or {}).get("servers") or []:
+        try:
+            if int(sv.get("id")) == int(sid):
+                return sv
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+_spectate_pattern = {"idx": None}
+
+
+def spectate_urls(shard):
+    """Candidate spectate WebSocket URLs for a server, most likely first. After the regional
+    split each server has its own wsBaseUrl and a per-region routeShardId; the exact path is
+    probed once and remembered (_spectate_pattern) so later sockets go straight to it."""
+    sv = server_info(shard) or {}
+    base = (sv.get("wsBaseUrl") or "").rstrip("/")
+    route = sv.get("routeShardId") or sv.get("localShardId")
+    cands = []
+    if base and route is not None:
+        cands.append(f"{base}/ws/spectate/s{route}")
+    if base:
+        cands.append(f"{base}/ws/spectate/s{shard}")
+    cands.append(SPECTATE_WS.format(shard=shard))
+    out = []
+    for u in cands:
+        if u not in out:
+            out.append(u)
+    i = _spectate_pattern["idx"]
+    if i is not None and i < len(out):
+        out.insert(0, out.pop(i))
+    return out
+
+
+def fanout_origins():
+    """Regional read-fanout mirrors from the live server list (fallback: the known three)."""
+    seen = []
+    for sv in (_servers_cache.get("data") or {}).get("servers") or []:
+        o = (sv.get("fanoutOrigin") or "").rstrip("/")
+        if o and o not in seen:
+            seen.append(o)
+    for o in FANOUT_ORIGINS_DEFAULT:
+        if o not in seen:
+            seen.append(o)
+    return seen
+
+
 def fetch_merchant(force=False):
-    """kintara.gg's traveling-merchant campaign state (the same public endpoint the
-    game client reads). Cached ~60s; serves last-good on failure."""
-    import requests
-    now = time.time()
-    if _merchant_cache["data"] and not force:
-        if now - _merchant_cache["at"] >= 60:
-            refresh_once("merchant", lambda: fetch_merchant(True))
-        return _merchant_cache["data"]
-    try:
-        r = requests.get(MERCHANT_URL, headers={"User-Agent": BROWSER_UA},
-                         timeout=PUBLIC_HTTP_TIMEOUT)
-        r.raise_for_status()
-        data = r.json() or {}
-        _merchant_cache.update(at=now, data=data)
-        return data
-    except Exception:
-        if _merchant_cache["data"]:
-            return _merchant_cache["data"]
-        raise
+    """Traveling-merchant campaign state (the same public endpoint the game client reads).
+    Cached ~60s, last-good (persisted) on failure."""
+    return _live_fetch(_merchant_cache, "merchant", MERCHANT_URL, 60,
+                       validate=lambda x: x.get("ok") is not False)
 
 
 def send_ntfy(title, body, tags="moneybag", priority="high", click=None):
@@ -3214,10 +3436,19 @@ def refresh_world_supply():
     catalog, so new items get correct names/art/categories automatically (see world_item_meta)."""
     import requests
     try:
-        r = requests.get(WORLD_INDEX_URL, params={"category": "all", "sort": "desc"},
-                         headers={"User-Agent": BROWSER_UA}, timeout=HTTP_TIMEOUT)
-        r.raise_for_status()
-        d = r.json() or {}
+        d, last_err = {}, None
+        for origin in fanout_origins():
+            try:
+                r = requests.get(origin + WORLD_INDEX_PATH, params={"category": "all", "sort": "desc"},
+                                 headers={"User-Agent": BROWSER_UA}, timeout=HTTP_TIMEOUT)
+                r.raise_for_status()
+                d = r.json() or {}
+                if d.get("ok"):
+                    break
+            except Exception as e:
+                last_err = e
+        if not d.get("ok") and last_err:
+            raise last_err
         if d.get("ok"):
             m, meta = {}, {}
             for row in d.get("rows", []):
@@ -3472,25 +3703,10 @@ def merchant_forecast(con, gold_rate):
 
 
 def fetch_property_status(force=False):
-    """kintara.gg's public property ownership board (mansions/houses/trailers →
-    ownerName, ownerId, sold, locked). Cached ~30s, last-good on failure."""
-    import requests
-    now = time.time()
-    if _property_cache["data"] and not force:
-        if now - _property_cache["at"] >= 30:
-            refresh_once("property", lambda: fetch_property_status(True))
-        return _property_cache["data"]
-    try:
-        r = requests.get(PROPERTY_STATUS_URL, headers={"User-Agent": BROWSER_UA},
-                         timeout=PUBLIC_HTTP_TIMEOUT)
-        r.raise_for_status()
-        data = r.json() or {}
-        _property_cache.update(at=now, data=data)
-        return data
-    except Exception:
-        if _property_cache["data"]:
-            return _property_cache["data"]
-        raise
+    """Public property ownership board (mansions / houses / trailers / flats → ownerName,
+    ownerId, sold, locked). Cached ~30s, last-good (persisted) on failure."""
+    return _live_fetch(_property_cache, "property", PROPERTY_STATUS_URL, 30,
+                       validate=lambda x: any(k in x for k in ("mansions", "houses", "trailers", "flats")))
 
 
 # ---------------------------------------------------------------------------
@@ -3559,18 +3775,38 @@ class SpectateHub:
                 self._state(shard).update(running=False,
                     err="websockets not installed — run: pip install websockets")
             return
-        url = SPECTATE_WS.format(shard=shard)
         try:
             # websockets renamed `extra_headers` -> `additional_headers` in newer
             # releases. DigitalOcean may install either, so select the supported
             # spelling instead of letting kwargs leak into BaseEventLoop.
             import inspect
-            headers = {"User-Agent": BROWSER_UA, "Origin": "https://kintara.gg"}
+            headers = {"User-Agent": BROWSER_UA, "Origin": KINTARA_ORIGIN}
             params = inspect.signature(websockets.connect).parameters
             header_kw = "additional_headers" if "additional_headers" in params else "extra_headers"
-            async with websockets.connect(
-                    url, **{header_kw: headers},
-                    open_timeout=15, max_size=2 ** 21, ping_interval=None) as ws:
+            sock, last_err = None, None
+            urls = spectate_urls(shard)
+            for i, url in enumerate(urls):
+                try:
+                    sock = await websockets.connect(url, **{header_kw: headers},
+                                                    open_timeout=12, max_size=2 ** 21, ping_interval=None)
+                    full = spectate_urls(shard)
+                    if url in full:
+                        # remember which URL shape works (index within the un-reordered list)
+                        sv = server_info(shard) or {}
+                        base = (sv.get("wsBaseUrl") or "").rstrip("/")
+                        route = sv.get("routeShardId") or sv.get("localShardId")
+                        shapes = [f"{base}/ws/spectate/s{route}" if base and route is not None else None,
+                                  f"{base}/ws/spectate/s{shard}" if base else None,
+                                  SPECTATE_WS.format(shard=shard)]
+                        shapes = [x for j, x in enumerate(shapes) if x and x not in shapes[:j]]
+                        if url in shapes:
+                            _spectate_pattern["idx"] = shapes.index(url)
+                    break
+                except Exception as e:
+                    last_err = e
+            if sock is None:
+                raise last_err or RuntimeError("no spectate endpoint")
+            async with sock as ws:
                 await ws.send("ping")
                 with self.lock:
                     self._state(shard)["err"] = None
@@ -3711,7 +3947,7 @@ class BossCensus:
     async def _open(self, shard):
         import websockets, inspect
         url = SPECTATE_WS.format(shard=shard)
-        headers = {"User-Agent": BROWSER_UA, "Origin": "https://kintara.gg"}
+        headers = {"User-Agent": BROWSER_UA, "Origin": KINTARA_ORIGIN}
         params = inspect.signature(websockets.connect).parameters
         kw = "additional_headers" if "additional_headers" in params else "extra_headers"
         return await websockets.connect(url, **{kw: headers}, open_timeout=15,
@@ -3943,7 +4179,8 @@ def gold_rate_usd(con, gold_item):
             return spot, 0
     except Exception:
         pass
-    return None, 0
+    usd, _ms = last_stored_gold_usd(con)
+    return (usd, -1) if usd else (None, 0)     # -1 = last stored measurement, not live
 
 
 def compute_arbitrage(con, gold_item, direction="gold_to_kins", fee_pct=0.0, min_qty=0):
@@ -4169,12 +4406,50 @@ def time_to_sell(con, item_type, days=21):
             "n": len(spans), "sold_ratio": sold_ratio}
 
 
+_ARCHIVE_REF = {"at": 0.0, "dt": None}
+
+
+def archive_now(con):
+    """'Now' for rolling windows over the sale archive: the real clock while the archive is
+    current, else the end of the last archived day. Without this every 7/14/30-day window goes
+    empty the moment kintara stops publishing sale stats, and the Index turns into dashes."""
+    t = time.time()
+    if _ARCHIVE_REF["dt"] is None or t - _ARCHIVE_REF["at"] > 60:
+        ref = None
+        try:
+            row = con.execute("SELECT MAX(date) d FROM sales_daily").fetchone()
+            if row and row[0]:
+                ref = datetime.fromisoformat(row[0]).replace(tzinfo=timezone.utc) + _td(days=1)
+        except Exception:
+            ref = None
+        nowdt = datetime.now(timezone.utc)
+        _ARCHIVE_REF.update(at=t, dt=min(nowdt, ref) if ref else nowdt)
+    return _ARCHIVE_REF["dt"]
+
+
+def last_stored_gold_usd(con):
+    """Most recent gold price we measured while listings were still live (later rows are a
+    frozen carry-forward). Returns (usd, ms) or (None, None)."""
+    try:
+        ls = con.execute("SELECT MAX(last_seen) m FROM listings").fetchone()
+        lim = (_parse_iso_ms(ls[0]) or 0) + 3600 * 1000 if ls and ls[0] else None
+        q = "SELECT usd, ts FROM gold_price WHERE usd IS NOT NULL"
+        args = ()
+        if lim:
+            q += " AND ts<=?"
+            args = (lim,)
+        r = con.execute(q + " ORDER BY ts DESC LIMIT 1", args).fetchone()
+        return (r[0], r[1]) if r else (None, None)
+    except Exception:
+        return None, None
+
+
 def recent_fair_usd(con, item_type, days=14):
     """Quantity-weighted average per-unit USD sale price over the last `days`, from
     sales_events. Gold sales are converted at the gold price on their own day. The 'fair
     value' anchor for the scorecard's cheap/fair/expensive verdict. Returns (usd_per_unit,
     n_sales) — n_sales is the count of completed sales (drives confidence, not the price)."""
-    cutoff = (datetime.now(timezone.utc) - _td(days=days)).isoformat()[:10]
+    cutoff = (archive_now(con) - _td(days=days)).isoformat()[:10]
     gusd = gold_daily_usd(con)
     gdates = sorted(gusd)
     def gold_on(d):
@@ -4208,7 +4483,7 @@ def recent_avg_usd_map(con, days=30):
     and market caps alive now that the live order book is login-gated: it's built purely from
     kintara's still-public completed-sale stats, so it reflects what things ACTUALLY sold for
     rather than a (now unobtainable) live ask."""
-    cutoff = (datetime.now(timezone.utc) - _td(days=days)).strftime("%Y-%m-%d")
+    cutoff = (archive_now(con) - _td(days=days)).strftime("%Y-%m-%d")
     gusd = gold_daily_usd(con)
     gdates = sorted(gusd)
 
@@ -4695,7 +4970,7 @@ def make_app():
                 for rel in cands:
                     ext = rel.rsplit(".", 1)[-1]
                     try:
-                        r = requests.get(f"https://kintara.gg/assets/hud/{rel}",
+                        r = requests.get(f"{KINTARA_ORIGIN}/assets/hud/{rel}",
                                          headers={"User-Agent": BROWSER_UA},
                                          timeout=PUBLIC_HTTP_TIMEOUT)
                         if r.status_code != 200 or not r.content:
@@ -4770,11 +5045,63 @@ def make_app():
             ]
         }), mimetype="application/manifest+json")
 
+    @app.route("/fonts/<name>")
+    def fonts(name):
+        if not re.fullmatch(r"[a-z0-9_-]+\.woff2", name or ""):
+            return Response(status=404)
+        path = os.path.join(SCRIPT_DIR_FONTS, name)
+        if not os.path.exists(path):
+            return Response(status=404)
+        resp = send_file(path, mimetype="font/woff2", max_age=31536000)
+        return resp
+
+    @app.route("/api/freshness")
+    def freshness():
+        """One small payload the UI uses to say how current each data source is."""
+        cached = api_cache_get("freshness", 30)
+        if cached is not None:
+            return jsonify(cached)
+        reachable = False
+        try:
+            fetch_servers()
+            reachable = bool((GLOBAL_LIVE_CACHES.get("servers") or {}).get("live"))
+        except Exception:
+            reachable = False
+        con = connect(readonly=True)
+        try:
+            sales = con.execute("SELECT MAX(date) d FROM sales_daily").fetchone()[0]
+            listed = con.execute("SELECT MAX(last_seen) m FROM listings").fetchone()[0]
+            gusd, gms = last_stored_gold_usd(con)
+            try:
+                mer = con.execute("SELECT MAX(ts) m FROM merchant_snapshots").fetchone()[0]
+            except Exception:
+                mer = None
+        finally:
+            con.close()
+        chain = None
+        mc = market_connect()
+        if mc is not None:
+            try:
+                chain = mc.execute("SELECT MAX(ts) FROM market_txns").fetchone()[0]
+            except Exception:
+                chain = None
+            finally:
+                mc.close()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        sales_stale = bool(sales) and (datetime.fromisoformat(today) -
+                                        datetime.fromisoformat(sales)).days >= 2
+        out = {"ok": True, "kintara_reachable": reachable,
+               "listings_live": listings_available(),
+               "sales_through": sales, "sales_stale": sales_stale,
+               "listings_through": listed, "gold_through": gms, "merchant_through": mer,
+               "onchain_through": chain, "origin": KINTARA_ORIGIN}
+        return jsonify(api_cache_put("freshness", out))
+
     @app.route("/api/status")
     def status():
         cached = api_cache_get("status-meta", 60)
         if cached is not None:
-            return jsonify({**_state, **cached})
+            return jsonify({**_state, **cached, "listings_live": listings_available()})
         con = connect(readonly=True)
         since = con.execute("SELECT MIN(first_seen) m FROM listings").fetchone()["m"]
         n = con.execute("SELECT COUNT(*) c FROM listings").fetchone()["c"]
@@ -5027,7 +5354,10 @@ def make_app():
     @app.route("/api/kins-price")
     def kins_price():
         # live KINS/USD (kintara's own figure), cached ~2 min — drives the header pill
-        return jsonify({"usd": current_kins_usd()})
+        px = current_kins_usd()
+        at = _kins_px_cache.get("at") or 0
+        stale = bool(_kins_px_cache.get("stale")) or (time.time() - at > 15 * 60)
+        return jsonify({"usd": px, "stale": stale, "as_of": int(at * 1000) if at else None})
 
     @app.route("/api/liquidity")
     def liquidity():
@@ -5666,7 +5996,7 @@ def make_app():
                 supply, sellers = srow["q"], srow["s"]
             # % change vs floor_usd_close N days ago (from the rollup)
             def change(n):
-                d = (datetime.now(timezone.utc) - _td(days=n)).strftime("%Y-%m-%d")
+                d = (archive_now(con) - _td(days=n)).strftime("%Y-%m-%d")
                 row = con.execute(
                     """SELECT floor_usd_close c FROM item_daily_metrics
                        WHERE item_type=? AND day<=? AND floor_usd_close IS NOT NULL
@@ -5679,7 +6009,7 @@ def make_app():
             vrow = con.execute(
                 """SELECT COALESCE(SUM(volume_units),0) u, AVG(volatility) v
                    FROM item_daily_metrics WHERE item_type=? AND day>=?""",
-                (item, (datetime.now(timezone.utc) - _td(days=7)).strftime("%Y-%m-%d"))).fetchone()
+                (item, (archive_now(con) - _td(days=7)).strftime("%Y-%m-%d"))).fetchone()
             velocity = (vrow["u"] / 7.0) if vrow else 0
             volatility = vrow["v"] if vrow else None
             last = con.execute(
@@ -5753,6 +6083,17 @@ def make_app():
             "SELECT item_type, MIN(date) f FROM sales_daily WHERE sales>0 GROUP BY item_type")}
         con.close()
         kins_px = current_kins_usd()
+        # When the sale archive has stopped (kintara no longer publishes /stats), its USD prices
+        # are from that last day — convert them at THAT day's KINS price, not today's, or every
+        # $KINS figure is off by however far the token has moved since.
+        kins_basis = "live"
+        if ref:
+            from datetime import date as _d2
+            if (_d2.today() - _d2.fromisoformat(ref)).days >= 2:
+                kmap = kins_daily_usd()
+                prior = [d for d in kmap if d <= ref]
+                if prior:
+                    kins_px, kins_basis = kmap[max(prior)], "archive"
         wsupply = world_item_supply()          # {item_type: total world units} (cached ~10min)
         supply_map = wsupply["map"]
         out = []
@@ -5786,7 +6127,7 @@ def make_app():
                 "market_cap": mcap,       # world_supply × per-unit USD value
             })
         return {"ok": True, "ref_day": ref, "window": window,
-                "kins_price": kins_px, "gold_rate": rate, "items": out,
+                "kins_price": kins_px, "kins_basis": kins_basis, "gold_rate": rate, "items": out,
                 "world_players": wsupply["players"], "world_generated": wsupply["generated"],
                 "listings_live": listings_available()}
 
@@ -5817,8 +6158,9 @@ def make_app():
             return jsonify(cached[1])
         try:
             return jsonify(refresh_gold_history(rng))
-        except Exception as e:
-            return jsonify({"ok": False, "error": "kins price source: " + str(e)}), 502
+        except Exception:
+            return jsonify({"ok": False, "unavailable": True,
+                            "error": "No gold price history has been recorded yet."}), 503
 
     @app.route("/api/servers")
     def servers():
@@ -5826,32 +6168,30 @@ def make_app():
         and adds rollup counts (open / full / queued, total in queue)."""
         try:
             raw = fetch_servers()
-        except Exception as e:
-            if _servers_cache["data"]:
-                raw = _servers_cache["data"]
-            else:
-                return jsonify({"ok": False, "error": str(e)}), 502
-        census = _boss_census.snapshot()
-        bc = census["counts"]
-        def boss_for(sid):
-            if sid in bc:
-                return bc[sid]
-            try:
-                return bc.get(int(sid))
-            except (TypeError, ValueError):
-                return None
+        except Exception:
+            return jsonify({"ok": False, "unavailable": True,
+                            "error": "The server list from kintara.com isn't responding right now."}), 503
+        ZONE_ORDER = {"us": 0, "eu": 1, "asia": 2}
         out = []
         for s in raw:
             sid = s.get("id")
+            zone = (s.get("zone") or "").lower() or None
             out.append({
                 "id": sid,
                 "name": s.get("name"),
+                "zone": zone,
+                "zone_label": s.get("zoneLabel") or (zone.upper() if zone else None),
+                "zone_name": s.get("zoneSubtitle"),
+                "members_only": bool(s.get("requiresMembership")),
                 "population": s.get("populationLabel"),
                 "full": bool(s.get("full")),
                 "queue": s.get("queueLength") or 0,
                 "min_level": s.get("minLevel") or 0,
-                "boss": boss_for(sid),           # players in the boss area now (None = not measured)
+                # boss-cave occupancy is reported by the server list itself now
+                "boss": s.get("bossCaveActive"),
+                "boss_cap": s.get("bossCaveCapacity"),
             })
+        out.sort(key=lambda x: (ZONE_ORDER.get(x["zone"], 9), x["id"] if isinstance(x["id"], int) else 0))
         n_full = sum(1 for s in out if s["full"])
         n_queue = sum(1 for s in out if s["queue"] > 0)
         boss_total = sum(v for v in (s["boss"] for s in out) if v)
@@ -5859,7 +6199,8 @@ def make_app():
                         "full": n_full, "open": len(out) - n_full,
                         "queued": n_queue,
                         "queue_total": sum(s["queue"] for s in out),
-                        "boss_region": census["region"], "boss_total": boss_total})
+                        "boss_region": None, "boss_total": boss_total,
+                        **feed_age("servers")})
 
     @app.route("/api/merchant")
     def merchant():
@@ -5871,9 +6212,23 @@ def make_app():
                   listings are exhausted (liquidity-aware), not a flat cheapest price."""
         try:
             m = fetch_merchant()
-        except Exception as e:
-            return jsonify({"ok": False, "error": "merchant source: " + str(e)}), 502
+        except Exception:
+            m = None
         raw = m or {}
+        if not raw:
+            # no live feed and nothing saved: rebuild the last known state from our own snapshots
+            con = connect(readonly=True)
+            try:
+                row = con.execute("SELECT * FROM merchant_snapshots ORDER BY ts DESC LIMIT 1").fetchone()
+            finally:
+                con.close()
+            if row:
+                res = json.loads(row["resources"] or "{}")
+                raw = {"mode": row["mode"], "complete": bool(row["complete"]),
+                       "goldTradeEnabled": bool(row["gold_trade"]), "goldStock": row["gold_stock"],
+                       "goals": {k: (v or {}).get("goal") for k, v in res.items()},
+                       **{k: (v or {}).get("current") for k, v in res.items()}}
+                _merchant_cache.setdefault("snap_at", row["ts"] / 1000)
         goals = raw.get("goals") or {}
         # per-resource progress (current vs goal, %). The official endpoint gives no
         # overall %, so we average the per-resource (capped) percentages.
@@ -5887,14 +6242,22 @@ def make_app():
             resources.append({"key": key, "label": label, "current": cur,
                               "goal": goal, "pct": pct})
         overall = round(sum(pcts) / len(pcts), 2) if pcts else None
+        age = feed_age("merchant")
+        if not _merchant_cache.get("data") and _merchant_cache.get("snap_at"):
+            age = {"as_of": int(_merchant_cache["snap_at"] * 1000), "stale": True}
         state = {
-            "mode": raw.get("mode"),
+            "mode": raw.get("phase") or raw.get("mode"),
             "gold_trade": bool(raw.get("goldTradeEnabled")),
             "complete": bool(raw.get("complete")),
             "overall_pct": overall,
             "gold_stock": raw.get("goldStock"),
             "gold_stock_full": raw.get("goldStockFull"),
+            "cycle": raw.get("cycleId"),
+            "gold_per_point": raw.get("goldPerPoint"),
+            "pool_remaining": raw.get("poolRemaining"),
+            "pool_full": raw.get("poolFull"),
             "resources": resources,
+            **age,
         } if raw else None
 
         # cost calculator: the per-1-gold recipe + live buy-side depth per ingredient,
@@ -6073,11 +6436,13 @@ def make_app():
         total ask value) plus how many properties that owner holds."""
         try:
             raw = fetch_property_status()
-        except Exception as e:
-            return jsonify({"ok": False, "error": "property source: " + str(e)}), 502
+        except Exception:
+            return jsonify({"ok": False, "unavailable": True,
+                            "error": "The property board from kintara.com isn't responding right now, "
+                                     "and KinScan hasn't saved a copy yet."}), 503
         plots, owners = [], {}
         for kind, key in (("mansion", "mansions"), ("house", "houses"),
-                          ("trailer", "trailers")):
+                          ("trailer", "trailers"), ("flat", "flats")):
             for num, info in (raw.get(key) or {}).items():
                 try:
                     num = int(num)
@@ -6122,7 +6487,8 @@ def make_app():
             p["owner_properties"] = owners.get(p["owner_id"], 0)
         return jsonify({"ok": True, "plots": plots,
                         "counts": {k: sum(1 for p in plots if p["kind"] == k)
-                                   for k in ("mansion", "house", "trailer")}})
+                                   for k in ("mansion", "house", "trailer", "flat")},
+                        **feed_age("property")})
 
     @app.route("/api/property-detail")
     def property_detail():
@@ -6131,13 +6497,14 @@ def make_app():
         every recorded sale (price in USD-at-the-time, seller, days-on-market), all-time
         high/low/avg, current ask if a key is listed now, plus the live owner + their portfolio."""
         kind = (request.args.get("kind") or "").strip().lower()
-        plural = {"mansion": "mansions", "house": "houses", "trailer": "trailers"}.get(kind)
+        plural = {"mansion": "mansions", "house": "houses", "trailer": "trailers",
+                  "flat": "flats"}.get(kind)
         try:
             num = int(request.args.get("num"))
         except (TypeError, ValueError):
             num = None
         if not plural or num is None:
-            return jsonify({"ok": False, "error": "kind (mansion/house/trailer) + num required"}), 400
+            return jsonify({"ok": False, "error": "kind (mansion/house/trailer/flat) + num required"}), 400
         key = f"key_{kind}_{num}"
         try:
             raw = fetch_property_status()
@@ -6242,7 +6609,7 @@ def make_app():
         """Aggregate everything we publicly know about one player into a single profile:
         marketplace earned (sell side) + active listings/inventory from our DB, property
         owned (live), and a placeholder for the on-chain layer (KINS spent/earned, wheel
-        spins) which needs the on-chain program addresses configured — see PLAYER_PAGE_PLAN.md.
+        spins) which needs the on-chain program addresses configured.
         Lookup is by in-game name (case-insensitive); `wallet` is accepted + echoed for the
         on-chain section. All data is public / on-chain — uninvasive by design."""
         name = (request.args.get("name") or "").strip()
@@ -6270,19 +6637,28 @@ def make_app():
             # --- marketplace EARNED (sell side) from sales_events (seller_name) ---
             sell = {"count": 0, "units": 0, "gross_gold": 0.0, "gross_token_usd": 0.0,
                     "gross_usd": 0.0}
+            # each day's USD is converted to $KINS at that day's price, so old sales aren't
+            # re-valued at today's token price
+            kmap = kins_daily_usd()
+            kdays = sorted(kmap)
+            gross_kins = 0.0
             for r in con.execute(
-                    """SELECT currency, COUNT(*) n, COALESCE(SUM(qty),0) u,
+                    """SELECT currency, day, COUNT(*) n, COALESCE(SUM(qty),0) u,
                               COALESCE(SUM(total),0) g
                        FROM sales_events WHERE seller_name = ? COLLATE NOCASE
-                       GROUP BY currency""", (canon,)):
+                       GROUP BY currency, day""", (canon,)):
                 sell["count"] += r["n"]
                 sell["units"] += r["u"]
                 if r["currency"] == "gold":
                     sell["gross_gold"] += r["g"] or 0
                 else:
                     sell["gross_token_usd"] += r["g"] or 0
-                sell["gross_usd"] += usd_of(r["g"], r["currency"])
-            sell["gross_kins"] = (sell["gross_usd"] / kp) if kp else None
+                u = usd_of(r["g"], r["currency"])
+                sell["gross_usd"] += u
+                prior = [d for d in kdays if r["day"] and d <= r["day"]]
+                kd = kmap[prior[-1]] if prior else kp
+                gross_kins += (u / kd) if kd else 0.0
+            sell["gross_kins"] = gross_kins if (kmap or kp) else None
             sell["avg_sale_usd"] = (sell["gross_usd"] / sell["count"]) if sell["count"] else None
             # top items sold (by USD)
             by_item = []
@@ -6368,7 +6744,7 @@ def make_app():
             # on-demand /api/player-live spectate sweep — see the Player tab.
             # On-chain layer (KINS spent/earned, wheel spins, club, verification) is not wired
             # yet — it needs the live KINS mint + marketplace/treasury/wheel program addresses
-            # captured from a sample transaction (see PLAYER_PAGE_PLAN.md). Surface a clear
+            # captured from a sample transaction. Surface a clear
             # pending state rather than fake numbers.
             # on-chain KINS stats come from the separate (slower) /api/wallet-onchain so the
             # DB profile renders instantly; the Player page fires it when a wallet is entered.
@@ -6459,7 +6835,8 @@ INDEX_HTML = r"""<!doctype html>
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/site.webmanifest">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800&family=Fredoka:wght@400;500;600;700&display=swap');
+@font-face{font-family:'Fredoka';src:url('/fonts/fredoka.woff2') format('woff2');font-weight:300 700;font-display:swap}
+@font-face{font-family:'Cinzel';src:url('/fonts/cinzel.woff2') format('woff2');font-weight:400 900;font-display:swap}
 :root{
   --bg:#0a0f1a; --panel:#131c2b; --panel2:#1a263a; --line:#243349;
   --ink:#e9eef5; --mut:#8aa0bd; --gold:#e8b54a; --gold2:#f6d68a;
@@ -7265,7 +7642,7 @@ kbd{font:11px var(--mono);background:rgba(255,255,255,.06);border:1px solid var(
   color:var(--gold2);text-shadow:0 0 32px rgba(232,181,74,.35);letter-spacing:-.01em}
 .mw-hero-sub{font:500 16px/1.5 var(--ui);color:var(--ink);opacity:.92}
 .mw-hero-sub b{color:var(--gold2)}
-.mw-hero-meta{margin-top:12px;font:12px var(--mono);color:var(--mut);
+.mw-hero-meta{margin-top:12px;font:12.5px var(--ui);color:var(--mut);
   display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
 .mw-dot{width:7px;height:7px;border-radius:50%;background:var(--buy);display:inline-block;
   margin-right:6px;box-shadow:0 0 8px var(--buy);animation:mwpulse 2s infinite}
@@ -7359,6 +7736,116 @@ kbd{font:11px var(--mono);background:rgba(255,255,255,.06);border:1px solid var(
 .mw-tr a{color:var(--mut);text-decoration:none;border-bottom:1px dotted rgba(255,255,255,.2)}
 .mw-tr a:hover{color:var(--gold2)}
 .mw-miss{padding:40px;text-align:center;color:var(--mut);font:14px var(--ui)}
+
+/* ================= v2 refinement layer ================= */
+:root{--bg:#0a1120;--panel:#111a2b;--panel2:#172238;--line:rgba(148,172,210,.16);--line2:rgba(148,172,210,.26);
+  --ink:#e8edf5;--mut:#8d9db6;--mut2:#6f809a;--amber:#f2b45a}
+body{background:radial-gradient(1200px 560px at 78% -18%,rgba(72,98,146,.28),transparent 62%),#0a1120 fixed;
+  -webkit-font-smoothing:antialiased}
+html{background:#0a1120}
+.mw-eyebrow{text-transform:none!important;letter-spacing:0!important;font:600 14px var(--ui)!important}
+body{min-height:100vh;background-attachment:scroll}
+::selection{background:rgba(232,181,74,.35)}
+:focus-visible{outline:2px solid var(--gold2);outline-offset:2px}
+header{position:sticky;top:0;z-index:50;background:rgba(10,17,32,.82);backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.hdr{padding:12px 28px;gap:12px}
+.brand-mark{width:34px;height:34px;border-radius:10px}
+h1{font-size:20px;letter-spacing:.06em}
+.brand-sub{font:500 11.5px var(--ui);letter-spacing:0;text-transform:none;color:var(--mut)}
+.meta{font:500 12px var(--ui)}
+.kpx .kpx-t{font:600 11px var(--ui);letter-spacing:0}
+.kpx .kpx-v{font:600 13px var(--ui)}
+.kpx.stale .kpx-v{color:var(--mut)}
+.kpx.stale::after{content:"";width:6px;height:6px;border-radius:50%;background:var(--amber);opacity:.8}
+main{padding:18px 28px 56px}
+/* tab bar: one quiet rail, groups separated, active tab lifted */
+.tabs{gap:2px;padding:4px;border:1px solid var(--line);border-radius:14px;background:rgba(17,26,43,.7);
+  margin-bottom:14px;align-items:center}
+.tab{padding:8px 14px;border-radius:10px;border:0;font:500 13.5px var(--ui);color:var(--mut);
+  transition:color .15s,background .15s}
+.tab:hover{color:var(--ink);background:rgba(255,255,255,.045)}
+.tab.on{color:#1d1404;background:linear-gradient(180deg,var(--gold2),var(--gold));font-weight:600;
+  box-shadow:0 4px 14px rgba(232,181,74,.22)}
+.tab-sep{width:1px;align-self:stretch;margin:6px 6px;background:var(--line)}
+/* freshness strip */
+.fresh{display:flex;align-items:flex-start;gap:10px;margin:0 0 16px;padding:10px 14px;border-radius:12px;
+  border:1px solid rgba(242,180,90,.28);background:linear-gradient(90deg,rgba(242,180,90,.10),rgba(242,180,90,.03));
+  color:#e9dcc4;font:500 13px/1.5 var(--ui)}
+.fresh[hidden]{display:none}
+.fresh,.fresh *{white-space:normal}
+.fresh>div{flex:1 1 auto;min-width:0}
+.fresh .fi{flex:0 0 8px;width:8px;height:8px;border-radius:50%;margin-top:6px;background:var(--amber);
+  box-shadow:0 0 0 4px rgba(242,180,90,.14)}
+.fresh.down{border-color:rgba(240,106,106,.32);background:linear-gradient(90deg,rgba(240,106,106,.10),rgba(240,106,106,.03))}
+.fresh.down .fi{background:var(--sell);box-shadow:0 0 0 4px rgba(240,106,106,.14)}
+.fresh b{color:#fff3dc;font-weight:600}
+.fresh .fx{color:var(--mut)}
+/* generic notice card (used instead of raw errors) */
+.notice{max-width:760px;margin:8px auto;padding:22px 24px;border:1px solid var(--line);border-radius:14px;
+  background:var(--panel);text-align:left;font:14px/1.6 var(--ui);color:var(--mut)}
+.notice h3{margin:0 0 6px;font:600 16px var(--ui);color:var(--ink)}
+.notice p{margin:0}
+.notice p+p{margin-top:8px}
+.empty{font:14px/1.6 var(--ui)}
+/* tables: sentence-case headers, calmer numerals */
+table{font:13px/1.45 var(--ui)}
+th{font:500 12px var(--ui);letter-spacing:0;text-transform:none;color:var(--mut2)}
+th::first-letter{text-transform:uppercase}
+tbody tr{transition:background .12s}
+tbody tr:hover{background:rgba(255,255,255,.035)}
+/* labels: no tracked mono caps */
+.mw-card .lab,.mw-spin-stat .l,.pd-price .lab,.pd-card .l,.pd-tbl th,.pm-stat .box .l,.gtitle2,
+.srv-pop-h .ttl,.mevents h3,.pl-k,.sc-stat .sc-k,.ll-h,.gw-statpanel h4{
+  font-family:var(--ui);text-transform:none;letter-spacing:0;font-weight:500}
+.mw-card .lab{font-size:13px;color:var(--mut)}
+.mw-hero-meta,.mw-card .sub{font-family:var(--ui)}
+.mw-card,.card{transition:border-color .18s,transform .18s}
+.mw-card:hover{border-color:var(--line2);transform:translateY(-1px)}
+input,select,button,textarea{border-color:var(--line);transition:border-color .15s,background .15s}
+input:focus,select:focus{border-color:rgba(232,181,74,.6);outline:none}
+/* server bubble: zone headings */
+.srv-zone{grid-column:1/-1;display:flex;align-items:baseline;gap:8px;margin:6px 2px 0;
+  font:600 12.5px var(--ui);color:var(--ink)}
+.srv-zone:first-child{margin-top:0}
+.srv-zone span{font-weight:500;color:var(--mut2)}
+.club{display:inline-block;margin-left:6px;padding:0 7px;border-radius:999px;font:600 10.5px/18px var(--ui);
+  color:#d9c2ff;background:rgba(155,123,216,.16);border:1px solid rgba(155,123,216,.35)}
+/* live world: zone-grouped server picker + offline board */
+.lw-shards{display:flex;flex-direction:column;gap:8px}
+.lw-zl{min-width:96px}
+.lw-zone{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.lw-zl{font:500 12px var(--ui);color:var(--mut2);margin-right:2px}
+.board{display:grid;gap:18px}
+.board-z h4{margin:0 0 8px;font:600 14px var(--ui);color:var(--ink)}
+.board-z h4 span{font-weight:500;color:var(--mut2);margin-left:6px}
+.board-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
+.bcard{padding:14px 15px;border:1px solid var(--line);border-radius:12px;background:var(--panel);
+  transition:border-color .15s,transform .15s}
+.bcard:hover{border-color:var(--line2);transform:translateY(-1px)}
+.bcard .bn{display:flex;align-items:center;gap:6px;font:600 14px var(--ui);color:var(--ink)}
+.bcard .bm{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px 12px;font:13px var(--ui);color:var(--mut)}
+.bcard .bm b{color:var(--ink);font-weight:600}
+.pop{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--mut2)}
+.pop.High{background:var(--sell)}.pop.Medium{background:var(--amber)}.pop.Low{background:var(--buy)}
+/* property: flats */
+.pm-flats{margin-top:18px;border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:16px 18px}
+.pm-flats h3{margin:0 0 12px;font:600 15px var(--ui);color:var(--ink)}
+.pm-flats h3 span{font-weight:500;color:var(--mut2);margin-left:8px;font-size:13px}
+.pm-flat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.pm-flat{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:10px;cursor:pointer;
+  border:1px solid var(--line);background:var(--panel2);transition:border-color .15s,background .15s}
+.pm-flat:hover{border-color:rgba(79,193,176,.6);background:rgba(79,193,176,.08)}
+.pm-flat .fn{flex:0 0 auto;min-width:30px;font:600 12px var(--ui);color:#7fdccd}
+.pm-flat .fo{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 13px var(--ui);color:var(--ink)}
+.pm-flat.lk{border-color:rgba(240,106,106,.4)}
+.pm-flat .on{flex:0 0 6px;width:6px;height:6px;border-radius:50%;background:var(--buy);margin-left:auto}
+@media (max-width:760px){
+  .hdr{padding:10px 14px}.brand-sub{display:none}main{padding:12px 12px 40px}
+  .tabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;border-radius:12px}
+  .tabs::-webkit-scrollbar{display:none}.tab{white-space:nowrap}.tab-sep{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style></head>
 <body>
 <header><div class="hdr">
@@ -7372,7 +7859,7 @@ kbd{font:11px var(--mono);background:rgba(255,255,255,.06);border:1px solid var(
   <div class="meta" id="status">connecting…</div>
   <span class="live-upd"><i class="d"></i><span id="upd">live</span></span>
   <button class="kbtn" id="cmdkBtn" data-tip="Search items, sellers &amp; tabs">🔍 Search <kbd>⌘K</kbd></button>
-  <div class="kpx" id="kpx" data-tip="live $KINS price (USD)"></div>
+  <div class="kpx" id="kpx" data-tip="$KINS price in USD, from kintara.com"></div>
   <div class="online-pill" data-tip="unique anonymous browsers active in the last 75 seconds">
     <i class="online-dot"></i><span id="onlineCount">— online</span>
   </div>
@@ -7385,17 +7872,19 @@ kbd{font:11px var(--mono);background:rgba(255,255,255,.06);border:1px solid var(
 </div></div>
 <main>
   <div class="tabs">
-    <div class="tab on" data-t="market">Market Watch</div>
-    <div class="tab" data-t="hist">Index</div>
-    <div class="tab" data-t="merchant">Merchant</div>
-    <div class="tab" data-t="gold">Gold price</div>
-    <div class="tab" data-t="live">Live listings</div>
-    <div class="tab" data-t="removed">Sales feed</div>
-    <div class="tab" data-t="arb">Arbitrage</div>
-    <div class="tab" data-t="world">Live World</div>
-    <div class="tab" data-t="props">Property Map</div>
-    <div class="tab" data-t="player">Player</div>
+    <div class="tab on" data-t="market" tabindex="0">Market Watch</div>
+    <div class="tab" data-t="hist" tabindex="0">Index</div>
+    <div class="tab" data-t="removed" tabindex="0">Sales feed</div>
+    <div class="tab" data-t="gold" tabindex="0">Gold price</div>
+    <div class="tab" data-t="live" tabindex="0">Live listings</div>
+    <div class="tab" data-t="arb" tabindex="0">Arbitrage</div>
+    <span class="tab-sep" aria-hidden="true"></span>
+    <div class="tab" data-t="world" tabindex="0">Live World</div>
+    <div class="tab" data-t="merchant" tabindex="0">Merchant</div>
+    <div class="tab" data-t="props" tabindex="0">Property</div>
+    <div class="tab" data-t="player" tabindex="0">Player</div>
   </div>
+  <div id="fresh" class="fresh" hidden></div>
   <div id="view"></div>
 </main>
 
@@ -7718,7 +8207,7 @@ function gotoTab(t){
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.t===t));
   TAB=t; state.propDetail=null; hideDeal(); hideSold();
   if(changed) $('#view').innerHTML=skel(7);   // never leave the previous page under a new active tab
-  fadeView(); render(); schedule(); analyticsHeartbeat(true);
+  fadeView(); render(); schedule(); analyticsHeartbeat(true); renderFresh();
 }
 function openCmdk(){ const o=$('#cmdk'); o.classList.add('on'); const i=$('#cmdkInput'); i.value=''; cmdkRender(''); i.focus(); }
 function closeCmdk(){ $('#cmdk').classList.remove('on'); }
@@ -7758,26 +8247,51 @@ async function loadStatus(){
   // Sales/price/on-chain data keep flowing even when the order book is login-gated, so a
   // gated order book is NOT a "reconnecting" state — don't cry wolf in the header.
   const staleMs = s.last_success ? (Date.now()-new Date(s.last_success)) : Infinity;
-  const persistent = LISTINGS_LIVE!==false && (s.fail_streak||0) >= 3 && staleMs > 4*60*1000;
-  $("#status").innerHTML = persistent
-    ? `<span class="dot err"></span>reconnecting to kintara… <span class="mut">data ${s.last_success?ago(s.last_success)+' old':'unavailable'}</span>`
-    : "";
+  const offline = FRESH && FRESH.ok && FRESH.kintara_reachable===false;
+  $("#status").innerHTML = offline ? `<span class="dot err"></span>kintara.com offline` : "";
 }
+let FRESH=null;
+function fmtDay(v){ if(v==null) return '—'; const d=(typeof v==='number')?new Date(v):new Date(String(v).length<=10?v+'T12:00:00Z':v);
+  return isNaN(d)?String(v):d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:(new Date().getFullYear()!==d.getFullYear())?'numeric':undefined}); }
+function daysOld(v){ if(v==null) return 0; const d=(typeof v==='number')?v:Date.parse(String(v).length<=10?v+'T23:59:59Z':v); return (Date.now()-d)/864e5; }
+async function loadFreshness(){
+  try{ FRESH=await (await fetch('/api/freshness')).json(); }catch(e){ return; }
+  renderFresh(); loadStatus();
+}
+function renderFresh(){
+  const el=$('#fresh'); if(!el) return; const f=FRESH; if(!f||!f.ok){ el.hidden=true; return; }
+  const msgs=[]; let down=false;
+  const live=['world','props','merchant'];
+  if(!f.kintara_reachable && live.includes(TAB)){ down=true;
+    msgs.push(`<b>kintara.com isn't responding.</b> <span class="fx">Showing the last copy KinScan saved; it refreshes on its own when the site is back.</span>`); }
+  if(['hist','removed','player'].includes(TAB) && f.sales_stale)
+    msgs.push(`<b>Sale history runs through ${fmtDay(f.sales_through)}.</b> <span class="fx">Prices, volumes and $KINS values here are as of that day.</span>`);
+  if(TAB==='gold' && daysOld(f.gold_through)>2)
+    msgs.push(`<b>Gold was last priced on ${fmtDay(f.gold_through)}.</b> <span class="fx">The chart ends where KinScan's own measurements stop.</span>`);
+  if(TAB==='market' && daysOld(f.onchain_through)>2)
+    msgs.push(`<b>On-chain trades through ${fmtDay(f.onchain_through)}.</b> <span class="fx">Market Watch reads the marketplace treasury wallet; newer trades appear as it syncs.</span>`);
+  el.classList.toggle('down',down);
+  el.innerHTML=msgs.length?`<span class="fi"></span><div>${msgs.join('<br>')}</div>`:'';
+  el.hidden=!msgs.length;
+}
+setInterval(loadFreshness, 60000);
 /* Kintara login-gated its live-listings API (2026-07-28). Everything price-related still works
    from completed-sale data, but the order-book-only views (live asks, arbitrage) can't. Explain
    that in place rather than showing an empty table that reads as broken. */
 let LISTINGS_LIVE=null;
+function bookStale(){ return !!(FRESH && FRESH.listings_through && daysOld(FRESH.listings_through)>1); }
+function bookDown(){ return LISTINGS_LIVE===false || bookStale(); }
 function orderBookNotice(extra){
-  return `<div class="empty" style="text-align:left;max-width:760px;margin:0 auto;line-height:1.65">
-    <div style="font:700 15px var(--ui);color:var(--gold2);margin-bottom:6px">Kintara's live listings API now requires a login</div>
-    Kintara made <code>/api/marketplace/listings</code> private, so live <b>asks</b> (and anything
-    derived from them, like arbitrage) can't be read anymore. We re-check automatically and this page
-    will fill back in the moment it reopens.
-    <div style="margin-top:10px;color:var(--mut)">Still fully live from Kintara's public sale data:
-    <b>Index</b> prices (avg price actually paid), <b>market caps</b>, <b>Sales feed</b>,
-    <b>Gold price</b>, and on-chain <b>Market Watch</b> volume.</div>
-    ${extra?`<div style="margin-top:10px;color:var(--mut)">${extra}</div>`:''}
-  </div>`;
+  if(LISTINGS_LIVE!==false && bookStale()) return `<div class="notice">
+    <h3>No current listings to show</h3>
+    <p>The newest order book KinScan has is from ${fmtDay(FRESH.listings_through)}. This page needs live asks, so it stays empty until KinScan pulls fresh listings from kintara.com.</p>
+    <p>Prices on the <b>Index</b> and the <b>Sales feed</b> still work from completed sales.</p>
+    ${extra?`<p>${extra}</p>`:''}</div>`;
+  return `<div class="notice">
+    <h3>Kintara's live listings now require a login</h3>
+    <p>Live asks, and anything built on them like arbitrage, can't be read anonymously anymore. KinScan re-checks on its own and fills this page back in if they reopen.</p>
+    <p>Still working from public sale data: <b>Index</b> prices, market caps, the <b>Sales feed</b>, <b>Gold price</b> and <b>Market Watch</b>.</p>
+    ${extra?`<p>${extra}</p>`:''}</div>`;
 }
 async function loadItems(){
   if(state.items.length) return;
@@ -7822,13 +8336,14 @@ async function loadArb(){
   const dirA=state.dir==="gold_to_kins";
   const KP=d.kins_price;
   // market value of 1 gold in $KINS — the benchmark the "kins/gold" column is read against
-  const marketKpg = (d.gold_rate && KP) ? d.gold_rate/KP : null;
+  const marketKpg = (d.gold_rate && KP && d.gold_rate_listings>=0) ? d.gold_rate/KP : null;
   const rateTxt = d.gold_rate!=null
     ? `<span class="big flashable">1 gold = ${fmtU(d.gold_rate)}</span>
        ${marketKpg!=null?`<span class="big" style="color:var(--gold2)">= ${fmtKins(marketKpg)} $KINS</span>`:''}
        ${state.goldSpark?`<span data-tip="gold price (USD), last ~24h">${sparkline(state.goldSpark,96,24)}</span>`:''}
        <small>${d.gold_rate_listings>0
            ? `avg of the ${d.gold_rate_listings} cheapest per-gold ask${d.gold_rate_listings===1?'':'s'}`
+           : d.gold_rate_listings<0 ? `last price KinScan measured${FRESH&&FRESH.gold_through?', '+fmtDay(FRESH.gold_through):''}`
            : `kintaragold.xyz spot (no live gold listings)`}</small>`
     : `<span class="big warn">no gold rate</span>
        <small>pick the gold item above; need a live token (KINS) listing of it</small>`;
@@ -7869,7 +8384,7 @@ async function loadArb(){
   const soldHdr = (dirA ? "sold KINS" : "sold gold")+(d.ref_day?` · ${d.ref_day.slice(5)}`:"");
   const intN = v => v==null ? "—" : Number(v).toLocaleString();
 
-  const table = (LISTINGS_LIVE===false && !rows.length) ?
+  const table = (bookDown() && !rows.length) ?
     orderBookNotice("Arbitrage compares live <b>asks</b> across currencies, so it needs the order book specifically.")
     : (d.gold_rate==null) ?
     `<div class="empty">Set the gold rate first: choose which item is tradeable gold above. Need at least one live KINS (token) listing of it.</div>`
@@ -8040,7 +8555,7 @@ async function loadMispricing(){
 
   const priceHdr = cur==="gold"?"price (gold)":cur==="kins"?"price ($KINS)":"price";
   const table = !rows.length
-    ? (LISTINGS_LIVE===false
+    ? (bookDown()
         ? orderBookNotice("This scan compares live <b>asks</b> against recent sales, so it needs the order book specifically.")
         : `<div class="empty">Nothing matches the current filters. Clear the search, enable more categories, or turn off "profitable only". (An item appears once it has a live listing and a recent recorded sale.)</div>`)
     : `<table><thead><tr>
@@ -8194,7 +8709,7 @@ async function loadLive(){
   const rows=await (await fetch("/api/current?"+lqs())).json();
   if(TAB!=="live" || !$("#ltable") || myseq!==fstate.seq) return;   // tab changed or a newer fetch superseded this one — don't clobber
   $("#ltable").innerHTML = !rows.length
-    ? (LISTINGS_LIVE===false ? orderBookNotice() : `<div class="empty">No live listings match.</div>`)
+    ? (bookDown() ? orderBookNotice() : `<div class="empty">No live listings match.</div>`)
     : `<table><thead><tr><th>item</th><th>seller</th><th class="num">qty</th>
         <th class="num">price</th><th class="num">listed</th>
         </tr></thead><tbody>`+rows.map(r=>`<tr>
@@ -8343,7 +8858,7 @@ function renderHist(){
         <span style="width:14px"></span>
         <button class="gw-pill" id="histRefresh" data-tip="Refresh now">↻</button>
       </div>
-      <div class="gw-note">${state.histWindow==1?"Most recent trading day":("Last "+state.histWindow+" days")} · through ${d.ref_day||"—"} · live $KINS price ${kp} per token${d.world_players?` · in-world supply across ${(+d.world_players).toLocaleString()} players`:''}${d.listings_live===false?` · <span style="color:var(--gold2)">prices marked ~ are avg <b>sold</b> prices</span> (Kintara's live listings API now requires login)`:''}</div>
+      <div class="gw-note">${state.histWindow==1?"Most recent trading day":("Last "+state.histWindow+" days")} · through ${d.ref_day||"—"} · ${d.kins_basis==='archive'?'$KINS at that day\'s price,':'live $KINS price'} ${kp} per token${d.world_players?` · in-world supply across ${(+d.world_players).toLocaleString()} players`:''}${d.listings_live===false?` · <span style="color:var(--gold2)">prices marked ~ are avg <b>sold</b> prices</span> (Kintara's live listings API now requires login)`:''}</div>
       <div class="gw-head"><span>Item</span><span class="r">Sales</span><span class="r">In world</span><span class="r">Floor Gold</span><span class="r">Floor USD</span><span class="r">Floor $KINS</span><span class="r">Mkt cap</span></div>
       <div id="gwrows">${body||`<div class="gw-empty">No items in this category.</div>`}</div>
     </div></div>`;
@@ -8875,29 +9390,37 @@ async function loadKinsPx(){
   let d; try{ d=await (await fetch("/api/kins-price")).json(); }catch(e){ return; }
   if(d.usd==null){ if(!el.innerHTML) el.innerHTML=`<span class="kpx-t">$KINS</span><span class="kpx-v">—</span>`; return; }
   const prev=el.__px;
-  el.innerHTML=`<span class="kpx-t">$KINS</span><span class="kpx-v">$${(+d.usd).toFixed(4)}</span>`;
+  const pxs = d.usd>=1 ? (+d.usd).toFixed(2) : (+d.usd).toPrecision(3);
+  el.innerHTML=`<span class="kpx-t">$KINS</span><span class="kpx-v">$${pxs}</span>`;
+  el.classList.toggle('stale', !!d.stale);
+  el.dataset.tip = d.stale && d.as_of ? `Last known $KINS price, from ${fmtDay(d.as_of)} — kintara.com isn't responding` : '$KINS price in USD, from kintara.com';
   if(prev!=null && d.usd!==prev && !RM){ const v=el.querySelector(".kpx-v");
     v.classList.add(d.usd>prev?'flash-up':'flash-dn'); setTimeout(()=>v.classList.remove('flash-up','flash-dn'),700); }
   el.__px=d.usd;
 }
 async function loadServers(){
   let d; try{ d=await (await fetch("/api/servers")).json(); }catch(e){ return; }
-  if(d.ok && d.servers) state.servers=d.servers;   // id -> name, for the Live World labels
+  if(d.ok && d.servers){ state.servers=d.servers;   // id -> name, for the Live World labels
+    if(!state.liveShardPicked){ const cur=d.servers.find(x=>x.id===state.liveShard);
+      if(!cur || cur.members_only){ const first=d.servers.find(x=>!x.members_only); if(first && first.id!==state.liveShard){
+        state.liveShard=first.id; if(TAB==='world'){ WORLD=null; loadWorld(); } } } } }
   const el=$("#srv"); if(!el) return;
-  if(!d.ok){ el.innerHTML=`<button class="srv-btn">${SRV_ICON}<span>servers n/a</span></button>`; return; }
+  if(!d.ok){ el.innerHTML=`<button class="srv-btn" data-tip="kintara.com's server list isn't responding">${SRV_ICON}<span>Servers offline</span></button>`; return; }
   const popDot=p=>`<span class="pdot pop-${["High","Medium","Low"].includes(p)?p:'na'}"></span>`;
   const bossBadge=s=> s.boss!=null
-    ? `<span class="qbadge boss ${s.boss?'':'zero'}" data-tip="players fighting Venomweaver right now">🕷 ${s.boss}</span>` : '';
-  const cards=d.servers.map(s=>`<div class="srv-card">
-      <div class="nm">${popDot(s.population)}${s.name||('Server '+s.id)}
+    ? `<span class="qbadge boss ${s.boss?'':'zero'}" data-tip="players in the boss cave right now">🕷 ${s.boss}${s.boss_cap?'/'+s.boss_cap:''}</span>` : '';
+  let lastZone=null;
+  const cards=d.servers.map(s=>{ const zh = s.zone!==lastZone ? `<div class="srv-zone">${esc(zoneTitle(s))}</div>` : ''; lastZone=s.zone;
+    return zh+`<div class="srv-card">
+      <div class="nm">${popDot(s.population)}${esc(serverName(s.id))}${s.members_only?'<span class="club">Club</span>':''}
         ${s.min_level?`<small style="color:var(--mut);font:11px var(--mono);margin-left:auto">Lv ${s.min_level}+</small>`:''}</div>
       <div class="meta2"><span>${s.full?'<span style="color:var(--sell)">Full</span>':'<span style="color:var(--buy)">Open</span>'} · ${s.population||'—'}</span>
         <span class="badges2">${bossBadge(s)}<span class="qbadge ${s.queue?'':'zero'}">${s.queue?('queue '+s.queue):'no queue'}</span></span></div>
-    </div>`).join("");
+    </div>`; }).join("");
   el.classList.toggle("open", state.srvOpen);
   el.innerHTML=`
     <button class="srv-btn" id="srvBtn" title="Server status">
-      ${SRV_ICON}<span>${d.total}</span>
+      ${SRV_ICON}<span>${d.total} servers</span>
       <span class="q ${d.queue_total?'':'z'}">⏳ ${d.queue_total}</span>
     </button>
     <div class="srv-pop">
@@ -8925,7 +9448,7 @@ async function loadMerchant(){
   if(!document.querySelector('.mwrap')) $("#view").innerHTML=skel(5);
   let next;
   try{ next=await (await fetch("/api/merchant")).json(); }
-  catch(e){ if(pageLoadCurrent("merchant",req)) $("#view").innerHTML=`<div class="empty warn">Couldn't load merchant data.</div>`; return; }
+  catch(e){ if(pageLoadCurrent("merchant",req)) $("#view").innerHTML=`<div class="notice"><h3>Merchant data didn't load</h3><p>KinScan's server didn't answer. It retries automatically.</p></div>`; return; }
   if(!pageLoadCurrent("merchant",req)) return;
   MERCH=next;
   merchHistCache=null;   // refresh the resource-history chart data alongside the tracker
@@ -8936,7 +9459,7 @@ function mIcon(it){ return `<img class="ico" src="/icon/${it}" alt="" loading="l
   `onerror="this.style.visibility='hidden'">`; }
 function renderMerchant(){
   const d=MERCH||{};
-  if(d.ok===false){ $("#view").innerHTML=`<div class="empty warn">${d.error||'No merchant data.'}</div>`; return; }
+  if(d.ok===false){ $("#view").innerHTML=`<div class="notice"><h3>No merchant data yet</h3><p>${esc(d.error||"kintara.com's merchant feed isn't responding and nothing has been saved yet.")}</p></div>`; return; }
   const s=d.state, c=d.calc||{};
   /* ---- left: progress tracker (per-resource % shown) ---- */
   let track=`<section class="mpanel"><div class="empty">Waiting for merchant data…</div></section>`;
@@ -8955,8 +9478,8 @@ function renderMerchant(){
       ? `<div class="gold-stock"><span>Gold stock</span><strong>${(s.gold_stock||0).toLocaleString()} / ${(s.gold_stock_full||0).toLocaleString()}</strong></div>` : "";
     track=`<section class="mpanel">
       <div class="mhead"><div class="mtitle">Traveling Merchant</div>
-        <span class="mode-badge ${gold?'':'don'}">${gold?'GOLD TRADE':'DONATION'}</span></div>
-      <div class="msub">${gold?'Gold trading active':'Resource collection · donate to fill each goal'}</div>
+        <span class="mode-badge ${gold?'':'don'}">${gold?'GOLD TRADE':(s.mode==='resting'?'RESTING':'DONATION')}</span></div>
+      <div class="msub">${gold?'Gold trading is open':(s.mode==='resting'?`The merchant is resting${s.cycle?` · cycle ${s.cycle}`:''}. Progress below is where the campaign stands.`:'Donate resources to fill each goal')}${s.stale&&s.as_of?` <span style="color:var(--amber)">· saved ${fmtDay(s.as_of)}</span>`:''}</div>
       <div class="moverall"><div class="lab"><span>Overall progress</span><strong>${ov.toFixed(1)}%</strong></div>
         <div class="mtrack"><div class="mfill ${ov>=100?'done':''}" style="width:${Math.min(100,ov)}%"></div></div></div>
       <div class="mres">${rows}</div>${goldStock}
@@ -8998,8 +9521,11 @@ function renderMerchant(){
     <div class="mhead"><div class="mtitle" style="font-size:20px">Cost Calculator</div></div>
     <div class="msub">When gold trading is active, buy the trade recipe on the open market, mint gold, then compare against the live gold price. Cost walks the order book — bigger mints pay up as the cheap listings run out.</div>
     <div class="mintctl"><span>Mint</span>
-      <input type="number" min="1" id="mintQty" value="${want}"> <span>gold${capped?` · <span style="color:var(--sell)">capped to ${eff} by liquidity</span>`:''}</span></div>
-    ${!canCalc?`<div class="msub" style="color:var(--sell)">Not enough market liquidity (or gold price) to price a mint right now.</div>`:`
+      <input type="number" min="1" id="mintQty" value="${want}"> <span>gold${capped&&canCalc?` · <span style="color:var(--sell)">capped to ${eff} by liquidity</span>`:''}</span></div>
+    ${!canCalc?`<div class="msub" style="margin-top:4px">${LISTINGS_LIVE===false
+        ? "Pricing a mint needs live marketplace asks, and Kintara's listings now require a login. Here's the recipe so you can price it yourself:"
+        : "There aren't enough listings of the recipe ingredients to price a mint right now. The recipe:"}</div>
+      ${recipe.map(r=>`<div class="crow"><span class="ci">${mIcon(r.item_type)}<span>${r.label}</span></span><span class="r"></span><span class="r">×${(r.qty*want).toLocaleString()}</span></div>`).join('')}`:`
     <div class="crow chead"><span>Recipe · for ${eff===1?'1 gold':eff.toLocaleString()+' gold'}</span><span class="r">avg unit</span><span class="r">cost</span></div>
     ${recRows}
     <div class="calc-tot"><span>Craft cost</span><span class="v">${fmtU(craftN)}</span></div>
@@ -9011,7 +9537,7 @@ function renderMerchant(){
       <span class="k">Profit</span><span class="v ${pos?'pos':'neg'}">${spreadN==null?'—':(pos?'+':'')+fmtU(spreadN)}</span>
       <span class="k">Margin</span><span class="v ${pos?'pos':'neg'}">${marginPct==null?'—':(marginPct>=0?'+':'')+marginPct.toFixed(1)+'%'}</span>
     </div>`}
-    <div class="msub" style="margin-top:12px;font-size:12px">Gold price = our live rate (avg of the 3 cheapest per-gold asks). Trade recipe = current game.js MERCHANT_TRADE_COST. Resource cost = actually buying that many units cheapest-first across all live listings (gold listings converted at the gold rate); listed liquidity supports ~${maxMint.toLocaleString()} gold.</div>
+    <div class="msub" style="margin-top:12px;font-size:12px;${canCalc?'':'display:none'}">Gold price = our live rate (avg of the 3 cheapest per-gold asks). Trade recipe = current game.js MERCHANT_TRADE_COST. Resource cost = actually buying that many units cheapest-first across all live listings (gold listings converted at the gold rate); listed liquidity supports ~${maxMint.toLocaleString()} gold.</div>
   </section>`;
   $("#view").innerHTML=`<div class="mwrap">${track}${calc}</div>${forecastHTML(d.forecast)}`;
   const q=$("#mintQty");
@@ -9198,10 +9724,37 @@ async function loadWorld(){
   if(!pageLoadCurrent("world",req)) return; WORLD=d; renderWorld();
 }
 function realmInfo(r){ return (WORLD&&WORLD.realms&&WORLD.realms[r])||{l:(r||'Overworld'),e:'📍'}; }
-function serverName(n){ const s=(state.servers||[]).find(x=>x.id===n); return s&&s.name?s.name:('Server '+n); }
+function serverName(n){ const s=(state.servers||[]).find(x=>x.id===n); if(!s) return 'Server '+n;
+  return s.members_only ? ('Club '+(s.zone_label||'')).trim() : (s.name||('Server '+n)); }
+function titleCase(t){ return String(t||'').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()); }
+function zoneTitle(s){ return s.zone_name?titleCase(s.zone_name):(s.zone_label||'Other'); }
+function shardPicker(shards){
+  const pill=n=>`<div class="lw-shard ${n===state.liveShard?'on':''}" data-sh="${n}" tabindex="0">${esc(serverName(n))}</div>`;
+  const sv=(state.servers||[]).filter(s=>shards.includes(s.id));
+  if(!sv.length) return shards.map(pill).join('');
+  const zones=[]; sv.forEach(s=>{ let z=zones.find(q=>q.k===s.zone); if(!z){ z={k:s.zone,l:zoneTitle(s),ids:[]}; zones.push(z); } z.ids.push(s.id); });
+  return zones.map(z=>`<div class="lw-zone"><span class="lw-zl">${esc(z.l)}</span>${z.ids.map(pill).join('')}</div>`).join('');
+}
+function serverBoard(){
+  const sv=state.servers||[]; if(!sv.length) return '';
+  const zones=[]; sv.forEach(s=>{ let z=zones.find(q=>q.k===s.zone); if(!z){ z={k:s.zone,l:zoneTitle(s),list:[]}; zones.push(z); } z.list.push(s); });
+  return `<div class="board">`+zones.map(z=>`<div class="board-z"><h4>${esc(z.l)}<span>${z.list.length} servers</span></h4><div class="board-g">`+
+    z.list.map(s=>`<div class="bcard"><div class="bn"><span class="pop ${esc(s.population||'')}"></span>${esc(serverName(s.id))}${s.members_only?'<span class="club">Club</span>':''}</div>
+      <div class="bm"><span><b>${esc(s.population||'—')}</b> population</span><span>${s.full?'<b style="color:var(--sell)">Full</b>':'Open'}</span>
+        <span>${s.queue?`<b>${s.queue}</b> queued`:'No queue'}</span>${s.boss!=null?`<span>Boss cave <b>${s.boss}</b>/${s.boss_cap||4}</span>`:''}${s.min_level?`<span>Lv ${s.min_level}+</span>`:''}</div></div>`).join('')+
+    `</div></div>`).join('')+`</div>`;
+}
 function renderWorld(){
   const d=WORLD; if(!d) return;
   const shards=d.shards||[1,2,3,4];
+  const NSV=shards.length;
+  if(!d.players.length && d.online_total==null && d.err){
+    $("#view").innerHTML=`<div class="notice" style="max-width:none;margin:0 0 18px">
+        <h3>Player rosters aren't coming through right now</h3>
+        <p>KinScan reads who's online from Kintara's spectator feed, and that connection is failing. It keeps retrying in the background and this page fills in once it connects.</p>
+        <p style="font-size:12.5px;color:var(--mut2)">${esc(d.err)}</p></div>${serverBoard()||'<div class="empty">Server list unavailable.</div>'}`;
+    return;
+  }
   const all=[...d.players];
   const qq=(state.liveSearch||"").trim().toLowerCase();
   const ps = qq ? all.filter(p=>(p.name||'').toLowerCase().includes(qq)) : all;
@@ -9220,23 +9773,23 @@ function renderWorld(){
       const list=groups[r].sort((a,b)=>(b.avg||0)-(a.avg||0)).map(rowOf).join("");
       return `<div class="lw-sec">${info.e} ${esc(info.l)}<span>${groups[r].length}</span></div>${list}`;
     }).join("")
-    : (qq? `<div class="empty" style="padding:34px">No player matching “${esc(state.liveSearch)}” is rostered on ${esc(serverName(state.liveShard))} right now. They may be on another server or in an area we haven't swept this cycle.</div>`
-        : `<div class="empty" style="padding:34px">Scanning ${esc(serverName(state.liveShard))}… players appear as we sweep every area (give it ~20s).</div>`);
+    : (qq? `<div class="empty" style="padding:34px">Nobody matching “${esc(state.liveSearch)}” is on ${esc(serverName(state.liveShard))}. Press Enter to search every server.</div>`
+        : `<div class="empty" style="padding:34px">Scanning ${esc(serverName(state.liveShard))}. Players appear as each area is swept, usually within 20 seconds.</div>`);
   const online = d.online_total!=null
     ? `<span class="live"></span><b class="flashable">${abbr(d.online_total)}</b> online (all servers) · <b class="flashable" style="color:var(--gold2)">${all.length}</b> rostered on ${esc(serverName(state.liveShard))}${qq?` · <b style="color:var(--gold2)">${ps.length}</b> match`:''}`
-    : (d.err? `<span style="color:var(--sell)">${esc(d.err)}</span>` : '<span class="live"></span>connecting…');
+    : '<span class="live"></span>connecting…';
   $("#view").innerHTML=`<div class="lw-head">
-      <div class="lw-shards">${shards.map(n=>`<div class="lw-shard ${n===state.liveShard?'on':''}" data-sh="${n}" title="${esc(serverName(n))}">${esc(serverName(n))}</div>`).join("")}</div>
+      <div class="lw-shards">${shardPicker(shards)}</div>
       <div class="lw-online">${online}</div></div>
     <div class="lw-search">
-      <input id="lwsearch" placeholder="🔍 find a player by name…" value="${esc(state.liveSearch)}" autocomplete="off" spellcheck="false">
+      <input id="lwsearch" placeholder="Find a player by name" value="${esc(state.liveSearch)}" autocomplete="off" spellcheck="false">
       <button id="lwgo" class="go" ${state.liveSearchBusy?'disabled':''}>${state.liveSearchBusy?'Searching…':'Search all servers'}</button>
       ${(qq||state.liveSearchStatus)?`<button id="lwclear" title="clear">✕</button>`:''}
       <span id="lwstatus" class="lw-srch-status${state.liveSearchErr?' err':''}">${esc(state.liveSearchStatus||'')}</span>
     </div>
-    <p class="lw-note">Each server is a separate world (all 12). We sweep every area — hub, pond, shores, dungeons — to roster who's where (fills over the first ~20s). Typing filters this server's roster live; hit <b>Search all servers</b> (or Enter) to sweep every server and jump to whoever matches. Click anyone to expand; players out on the overworld also pin to the map.</p>
+    <p class="lw-note">Typing filters this server. Enter searches all ${NSV}. Click a player to see where they are.</p>
     <div class="lw-roster">${body}</div>`;
-  document.querySelectorAll('[data-sh]').forEach(b=>b.onclick=()=>{ state.liveShard=+b.dataset.sh; state.liveSel=null; state.liveSearchStatus=""; WORLD=null; loadWorld(); });
+  document.querySelectorAll('[data-sh]').forEach(b=>b.onclick=()=>{ state.liveShardPicked=true; state.liveShard=+b.dataset.sh; state.liveSel=null; state.liveSearchStatus=""; WORLD=null; loadWorld(); });
   const ls=$("#lwsearch"); if(ls){ ls.oninput=e=>{ state.liveSearch=e.target.value; renderWorld();
       const s=$("#lwsearch"); if(s){ s.focus(); s.setSelectionRange(s.value.length,s.value.length); } };
     ls.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); searchAllServers(); } }; }
@@ -9251,7 +9804,8 @@ async function searchAllServers(){
   const q=(state.liveSearch||'').trim();
   if(!q){ state.liveSearchStatus=""; renderWorld(); return; }
   if(state.liveSearchBusy) return;
-  state.liveSearchBusy=true; state.liveSearchStatus="searching all 12 servers…";
+  const NALL=((state.servers||[]).length)||15;
+  state.liveSearchBusy=true; state.liveSearchStatus=`searching all ${NALL} servers…`;
   renderWorld();
   const setStatus=t=>{ state.liveSearchStatus=t; state.liveSearchErr=false;
     const el=$("#lwstatus"); if(el){ el.textContent=t; el.classList.remove('err'); } };
@@ -9262,7 +9816,7 @@ async function searchAllServers(){
       let d; try{ d=await (await fetch("/api/live-search?q="+encodeURIComponent(q))).json(); }
       catch(e){ break; }
       if(d&&d.ok&&d.results&&d.results.length){ found=d.results[0]; break; }
-      const ready=d?d.ready:0, total=(d&&d.shards)?d.shards.length:12;
+      const ready=d?d.ready:0, total=(d&&d.shards)?d.shards.length:NALL;
       const conn=d&&d.connected!=null?d.connected:null;
       setStatus(conn==null?`searching… swept ${ready}/${total} servers`:
         `searching… connected ${conn}/${total}, swept ${ready}/${total}`);
@@ -9278,7 +9832,7 @@ async function searchAllServers(){
     setTimeout(()=>{ const el=document.querySelector(`.lw-p[data-id="${found.id}"]`);
       if(el) el.scrollIntoView({block:'center',behavior:'smooth'}); }, 380);
   } else {
-    state.liveSearchStatus=`"${q}" isn't on any of the 12 servers right now.`;
+    state.liveSearchStatus=`"${q}" isn't on any of the ${NALL} servers right now.`;
     state.liveSearchErr=true;
     renderWorld();
   }
@@ -9427,8 +9981,9 @@ async function loadPlayerLive(name){
     const s=$("#plLive"); if(!s || TAB!=="player") return;
     if(d&&d.found){ s.innerHTML=playerLiveCard(d); return; }
     tries++;
-    if((d&&d.ready>=12) || tries>=14){ s.innerHTML=playerLiveCard(d||{found:false}); return; }
-    s.innerHTML=`<div class="pl-panel pl-char"><div class="pl-h">Character</div><div class="empty">Searching servers… ${d?(d.ready||0):0}/12</div></div>`;
+    const NS=(d&&d.shards&&d.shards.length)||((state.servers||[]).length)||15;
+    if((d&&d.ready>=NS) || tries>=14){ s.innerHTML=playerLiveCard(d||{found:false}); return; }
+    s.innerHTML=`<div class="pl-panel pl-char"><div class="pl-h">Character</div><div class="empty">Searching servers… ${d?(d.ready||0):0}/${NS}</div></div>`;
     setTimeout(tick,850);
   };
   tick();
@@ -9456,7 +10011,7 @@ function playerLiveCard(d){
   if(d&&d.last_seen){ const ls=d.last_seen;
     return charCard(ls.player||{}, `last seen ${relAbs(ls.ts)} · ${esc(serverName(ls.shard))}`); }
   return `<div class="pl-panel pl-char"><div class="pl-h">Character</div>
-    <div class="empty">Offline, and we haven't captured this character before. Live cosmetics/level/gear show when they're in-game (swept all 12 servers).</div></div>`;
+    <div class="empty">Offline, and we haven't captured this character before. Live cosmetics/level/gear show when they're in-game (every server was checked).</div></div>`;
 }
 function renderPlayer(){
   const d=state.playerData, r=$("#plResult"); if(!r||!d) return;
@@ -9518,14 +10073,14 @@ async function loadProperty(){
   const req=beginPageLoad("props");
   if(!document.querySelector('.pm') && !state.propDetail && TAB==="props") $("#view").innerHTML=skel(6);
   let d; try{ d=await (await fetch("/api/property")).json(); }
-  catch(e){ if(pageLoadCurrent("props",req)&&!state.propDetail) $("#view").innerHTML=`<div class="empty warn">Couldn't load properties.</div>`; return; }
+  catch(e){ if(pageLoadCurrent("props",req)&&!state.propDetail) $("#view").innerHTML=`<div class="notice"><h3>Property data didn't load</h3><p>KinScan's server didn't answer. It retries automatically.</p></div>`; return; }
   if(!pageLoadCurrent("props",req)) return; PROP=d;
   if(state.propDetail) return;          // a detail page is open — don't clobber it with the map
   renderProperty();
 }
-const KIND_COLOR={mansion:'#e8b54a',house:'#5aa9e6',trailer:'#9b7bd8'};
+const KIND_COLOR={mansion:'#e8b54a',house:'#5aa9e6',trailer:'#9b7bd8',flat:'#4fc1b0'};
 function renderProperty(){
-  const d=PROP; if(!d||d.ok===false){ $("#view").innerHTML=`<div class="empty warn">${esc((d&&d.error)||'No property data.')}</div>`; return; }
+  const d=PROP; if(!d||d.ok===false){ $("#view").innerHTML=`<div class="notice"><h3>No property data yet</h3><p>${esc((d&&d.error)||"kintara.com's property feed isn't responding and nothing has been saved yet.")}</p></div>`; return; }
   const plots=(d.plots||[]).filter(p=>p.col0!=null);
   let minc=1e9,maxc=-1e9,minr=1e9,maxr=-1e9;
   plots.forEach(p=>{minc=Math.min(minc,p.col0);maxc=Math.max(maxc,p.col1);minr=Math.min(minr,p.row0);maxr=Math.max(maxr,p.row1);});
@@ -9605,6 +10160,7 @@ function renderProperty(){
         <div class="box"><div class="n">${d.counts.mansion}</div><div class="l">Mansions</div></div>
         <div class="box"><div class="n">${d.counts.house}</div><div class="l">Houses</div></div>
         <div class="box"><div class="n">${d.counts.trailer}</div><div class="l">Trailers</div></div>
+        ${d.counts.flat?`<div class="box"><div class="n">${d.counts.flat}</div><div class="l">Flats</div></div>`:''}
         <div class="box"><div class="n" style="color:var(--sell)">${locked}</div><div class="l">Locked</div></div>
         <div class="box"><div class="n" style="color:var(--buy)">${onlineCount}</div><div class="l">Owner online</div></div></div>
       <div class="pm-legend">
@@ -9616,7 +10172,8 @@ function renderProperty(){
     <div class="pm">
       <div class="pm-map"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">${ground}${trees}${grid}${blds}</svg>
         <div class="pm-tip" id="pmTip"></div></div>
-      <div class="pm-side" id="pmSide"></div></div>`;
+      <div class="pm-side" id="pmSide"></div></div>${flatsBlock(d)}`;
+  document.querySelectorAll('.pm-flat').forEach(el=>el.onclick=()=>openPropertyDetail('flat', +el.dataset.num));
   const tip=$("#pmTip");
   document.querySelectorAll('.pm-bld').forEach(g=>{
     g.onclick=()=>{ if(tip)tip.style.opacity='0'; openPropertyDetail(g.dataset.kind, +g.dataset.num); };
@@ -9629,6 +10186,14 @@ function renderProperty(){
     g.addEventListener('mouseleave',()=>{ if(tip)tip.style.opacity='0'; });
   });
   renderPropCard();
+}
+function flatsBlock(d){
+  const fl=(d.plots||[]).filter(p=>p.kind==='flat'); if(!fl.length) return '';
+  const onl=new Set((WORLD&&WORLD.players||[]).map(q=>q.name));
+  return `<section class="pm-flats"><h3>Flats<span>${fl.length} units · not on the estate map</span></h3><div class="pm-flat-grid">`+
+    fl.sort((a,b)=>a.num-b.num).map(p=>`<div class="pm-flat ${p.locked?'lk':''}" data-num="${p.num}" tabindex="0" title="Flat ${p.num}${p.locked?' · locked':''}">
+      <span class="fn">F${p.num}</span><span class="fo">${p.owner?esc(p.owner):'<span style="color:var(--mut)">For sale</span>'}</span>${p.owner&&onl.has(p.owner)?'<span class="on"></span>':''}</div>`).join('')+
+    `</div></section>`;
 }
 function renderPropCard(){
   const el=$("#pmSide"); if(!el) return;
@@ -9661,7 +10226,7 @@ async function openPropertyDetail(kind,num){
   if(TAB!=="props" || !state.propDetail) return;
   renderPropertyDetail(d);
 }
-const PD_ICON={mansion:'🏰',house:'🏠',trailer:'🚚'};
+const PD_ICON={mansion:'🏰',house:'🏠',trailer:'🚚',flat:'🏢'};
 function pdUsd(v){ return v==null?'—':(v>=1e6?'$'+(v/1e6).toFixed(2)+'M':v>=1000?'$'+Math.round(v).toLocaleString():'$'+(+v).toFixed(2)); }
 function pdHistChart(hist){
   if(!hist||hist.length<2) return `<div class="pd-empty">No recorded sales yet — the price history fills in here as this property's key trades on the market.</div>`;
@@ -9768,7 +10333,7 @@ async function loadMarket(){
   MW=d;
   if(!d.ok){
     v.innerHTML=`<div class="mw"><div class="mw-panel"><div class="mw-miss">
-      Market dataset isn't loaded yet.<br><span style="font:12px var(--mono)">${esc(d.error||'unavailable')} — run <b>build_market_dataset.py</b> and ship <b>market.db</b> to the data volume.</span>
+      Market dataset isn't loaded yet.<br><span style="font:12px var(--mono)">${esc(d.error||'unavailable')} — run <b>tools/build_market_dataset.py</b> and ship <b>market.db</b> to the data volume.</span>
     </div></div></div>`;
     return;
   }
@@ -9782,7 +10347,7 @@ async function loadMarket(){
       <div class="mw-hero-vol" id="mwHeroVol">$0</div>
       <div class="mw-hero-sub"><b>${abbr(m.volume_kins)}</b> $KINS traded across <b>${(m.txns||0).toLocaleString()}</b> marketplace trades</div>
       <div class="mw-hero-meta">
-        <span><span class="mw-dot"></span>live $KINS ${kpx}</span>
+        <span>$KINS ${kpx}</span>
         ${span?`<span>${span}</span>`:''}
         <span>${(m.unique_traders||0).toLocaleString()} unique traders</span>
       </div>
@@ -9958,6 +10523,7 @@ function schedule(){
     timer=setInterval(()=>{loadStatus();render();},30000);   // Live listings / Sales feed ~30s
   }
 }
+document.querySelectorAll(".tab").forEach(t=>t.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); t.click(); } }));
 document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
   gotoTab(t.dataset.t);
 });
@@ -9965,7 +10531,7 @@ $("#cmdkBtn").onclick=openCmdk;
 $("#cmdkInput").oninput=e=>cmdkRender(e.target.value);
 $("#cmdk").onclick=e=>{ if(e.target.id==="cmdk") closeCmdk(); };
 defineMorph($("#view"));   // flicker-free re-renders across every tab
-loadStatus(); loadServers(); loadKinsPx(); analyticsHeartbeat(true); render(); schedule();
+loadStatus(); loadServers(); loadKinsPx(); loadFreshness(); analyticsHeartbeat(true); render(); schedule();
 setInterval(loadStatus,6000); setInterval(loadServers,30000); setInterval(loadKinsPx,30000);
 setInterval(()=>analyticsHeartbeat(false),25000);
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") analyticsHeartbeat(true); });
@@ -10073,7 +10639,8 @@ def main():
         threading.Thread(target=market_sync_loop, args=(MARKET_SYNC_INTERVAL,), daemon=True).start()  # incremental treasury pull → market.db
     threading.Thread(target=sales_audit_loop, daemon=True).start()  # reconcile sales to in-game count
     _spectate_hub.start()   # live-world spectator hub (connects per shard on demand)
-    _boss_census.start()    # boss-area census for the server bubble (resolves the region key)
+    # Boss-cave occupancy now comes straight from /api/servers (bossCaveActive), so the old
+    # probing census (a socket per server, round-the-clock) is no longer started.
     hosted = args.host not in ("127.0.0.1", "localhost")
     url = f"http://{'127.0.0.1' if not hosted else args.host}:{args.port}"
     print(f"Dashboard: {url}   (Waitress {WEB_THREADS} threads · per-item refresh "
